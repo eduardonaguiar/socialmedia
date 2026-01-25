@@ -6,7 +6,8 @@
    - Emite evento `PostCreated` via outbox.
 2. **Graph Service (autoritativo)**
    - Mantém relações de follow (seguindo/seguidores).
-   - Responde consultas de seguidores e seguindo.
+   - Mantém materializações explícitas (saída/entrada) para leitura eficiente.
+   - Responde consultas de seguidores e seguindo com paginação por cursor.
 3. **Fanout Worker (derivado)**
    - Consome `PostCreated`.
    - Resolve seguidores do autor.

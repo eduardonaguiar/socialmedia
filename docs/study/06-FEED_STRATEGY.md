@@ -9,6 +9,7 @@
 - **Híbrida** com **threshold de celebridade = 100k seguidores**.
 - **Usuários normais**: fan-out no `PostCreated` → Redis ZSET.
 - **Celebridades**: não fan-out total; posts são mesclados no read.
+- **Graph Service**: fornece lista de seguidores (materialização de entrada) para fan-out.
 
 ## Paginação por cursor
 - Ordenação por **timestamp (score)**.

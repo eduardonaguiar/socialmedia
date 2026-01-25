@@ -65,6 +65,42 @@ make deps-health
 make obs-health
 ```
 
+## Social Graph Service (authoritative)
+The Graph Service listens on `http://localhost:8082` and expects the `X-User-Id` header for
+follow/unfollow operations. It supports cursor pagination for following/followers.
+
+### Follow a user
+```bash
+curl -fsS -X POST http://localhost:8082/follow/user-456 \
+  -H "X-User-Id: user-123"
+```
+
+### Unfollow a user
+```bash
+curl -fsS -X DELETE http://localhost:8082/follow/user-456 \
+  -H "X-User-Id: user-123"
+```
+
+### List following (first page)
+```bash
+curl -fsS "http://localhost:8082/users/user-123/following?limit=2"
+```
+
+### List following (next page)
+```bash
+curl -fsS "http://localhost:8082/users/user-123/following?cursor=<cursor>&limit=2"
+```
+
+### List followers
+```bash
+curl -fsS "http://localhost:8082/users/user-456/followers?limit=2"
+```
+
+Swagger (dev only):
+```bash
+open http://localhost:8082/swagger
+```
+
 Manual checks:
 ```bash
 curl -fsS http://localhost:9090/-/ready
