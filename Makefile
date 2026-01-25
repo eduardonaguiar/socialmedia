@@ -105,7 +105,7 @@ lint: ## Lint code (placeholder - implement per language/tooling)
 	@echo "No linter configured yet. Add dotnet analyzers / eslint / etc."
 
 test: ## Run tests (placeholder - implement once services exist)
-	@echo "No tests configured yet. Add 'dotnet test' per solution when created."
+	@dotnet test services/post-service/Tests/PostService.Tests.csproj
 
 clean: ## Local cleanup (non-destructive)
 	@echo "Nothing to clean yet."
