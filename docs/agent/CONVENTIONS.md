@@ -23,6 +23,23 @@
 - Prefer small modules + clear naming
 - Observability: OpenTelemetry tracing + metrics (minimal)
 
+## OpenTelemetry conventions
+### Resource attributes (required)
+- `service.name`: use scoped names like `post-service`, `graph-service`, `feed-service`, `fanout-worker`
+- `deployment.environment=dev`
+
+### Trace propagation
+- W3C Trace Context (`traceparent` header)
+
+### Metrics (minimum)
+- Request duration histogram (e.g., `http.server.duration`)
+- Request count and error count (e.g., `http.server.request_count`, `http.server.error_count`)
+
+### Log correlation
+- Include `trace_id` in structured logs when possible
+
+PT-BR reference: `docs/study/03-NFR.md` (Observabilidade — convenções mínimas).
+
 ## Data modeling principles
 - Authoritative tables normalized enough for clarity
 - Derived views optimized for reads (Redis ZSET hot window)

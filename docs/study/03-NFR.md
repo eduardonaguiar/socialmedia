@@ -11,3 +11,9 @@
 ## Trade-offs aceitos
 - Leituras podem ficar defasadas por alguns segundos.
 - Latência de escrita pode aumentar para garantir confiabilidade de eventos.
+
+## Observabilidade — convenções mínimas
+- **Atributos de recurso** obrigatórios: `service.name` e `deployment.environment=dev`.
+- **Propagação de trace**: W3C Trace Context (`traceparent`).
+- **Métricas**: duração de requisição (histograma), contagem total e contagem de erro.
+- **Logs**: sempre que possível, incluir `trace_id` para correlação.

@@ -23,6 +23,7 @@ arquitetura, dados e consistência.
 - [Arquitetura](../agent/ARCHITECTURE.md)
 - [Eventos](../agent/EVENTS.md)
 - [Local Dev](../agent/LOCAL_DEV.md)
+- [Observability](../agent/OBSERVABILITY.md)
 
 ## Convenções
 - **Autoritativo vs Derivado** é um princípio obrigatório em todas as decisões.

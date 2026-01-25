@@ -11,6 +11,7 @@
 - `make ps`        -> list containers
 - `make reset`     -> wipe volumes (destructive)
 - `make deps-health` -> verify dependency readiness
+- `make obs-health`  -> verify observability readiness
 
 ## Health checks
 - Post Service:    http://localhost:8081/health
@@ -18,10 +19,14 @@
 - Feed Service:    http://localhost:8083/health
 - Grafana:         http://localhost:3000
 - Prometheus:      http://localhost:9090
+- Loki:            http://localhost:3100/ready
+- Tempo:           http://localhost:3200/ready
+- OTEL Collector:  http://localhost:13133/healthz
 
 ## Dependencies (Docker Compose base)
-The base stack starts only data dependencies (Postgres, Redis, Redpanda) on the `case1-net` network.
-This matches the local architecture described in PT-BR in `docs/study/04-ARCHITECTURE.md`.
+The base stack starts data dependencies (Postgres, Redis, Redpanda) plus the observability stack
+on the `case1-net` network. This matches the local architecture described in PT-BR in
+`docs/study/04-ARCHITECTURE.md`.
 
 ### Start dependencies
 ```bash
@@ -31,6 +36,31 @@ make up
 ### Verify dependencies are ready
 ```bash
 make deps-health
+```
+
+### Verify observability is ready
+```bash
+make obs-health
+```
+
+Manual checks:
+```bash
+curl -fsS http://localhost:9090/-/ready
+curl -fsS http://localhost:3000/api/health
+curl -fsS http://localhost:3100/ready
+curl -fsS http://localhost:3200/ready
+curl -fsS http://localhost:13133/healthz
+```
+
+Prometheus targets page:
+```bash
+open http://localhost:9090/targets
+```
+
+Grafana login:
+```bash
+# Use .env values for GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD
+open http://localhost:3000
 ```
 
 Equivalent direct checks:
@@ -44,6 +74,7 @@ docker compose exec -T redpanda curl -fsS http://localhost:9644/v1/status/ready
 ```bash
 docker compose ps
 docker compose logs -f --tail=200
+docker compose logs -f --tail=200 otel-collector prometheus grafana loki tempo
 docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 ```
 
@@ -59,3 +90,8 @@ docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - 3000 Grafana
 - 9090 Prometheus
 - 4317 OTLP gRPC (Collector)
+- 4318 OTLP HTTP (Collector)
+- 8888 OTEL Collector internal metrics
+- 8889 OTEL Collector Prometheus exporter
+- 3100 Loki
+- 3200 Tempo
