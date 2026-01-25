@@ -26,11 +26,26 @@
 - Consumidores devem ser idempotentes (duplicatas são esperadas).
 
 ## Base local (Docker Compose)
-Para estudo local, iniciamos apenas as dependências centrais via Docker Compose:
+Para estudo local, iniciamos dependências centrais e observabilidade via Docker Compose:
 
 - **PostgreSQL** (dados autoritativos).
 - **Redis** (janela quente do feed, derivado).
 - **Redpanda** (API Kafka para eventos).
+
+## Observabilidade (stack local)
+Para validar comportamento e depurar falhas desde o início, o stack local inclui:
+
+- **OpenTelemetry Collector** como ponto único de entrada OTLP (gRPC/HTTP).
+- **Prometheus** para métricas (coleta o próprio Prometheus + métricas internas do Collector).
+- **Grafana** para visualização (datasources provisionados).
+- **Loki** para logs agregados.
+- **Tempo** para traces distribuídos.
+
+Contrato básico:
+- Serviços enviam OTLP para `otel-collector:4317` (gRPC) ou `otel-collector:4318` (HTTP).
+- Métricas OTLP são expostas pelo Collector em `:8889` para o Prometheus fazer scrape.
+- Logs OTLP são roteados para o Loki.
+- Traces OTLP são roteados para o Tempo.
 
 Convenções do stack local:
 - Rede única `case1-net` para comunicação previsível.

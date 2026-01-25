@@ -29,8 +29,11 @@ GRAPH_SERVICE_URL ?= http://localhost:8082
 FEED_SERVICE_URL  ?= http://localhost:8083
 GRAFANA_URL       ?= http://localhost:3000
 PROM_URL          ?= http://localhost:9090
+LOKI_URL          ?= http://localhost:3100
+TEMPO_URL         ?= http://localhost:3200
+OTEL_HEALTH_URL   ?= http://localhost:13133/healthz
 
-.PHONY: help up down restart ps logs build pull reset health deps-health urls \
+.PHONY: help up down restart ps logs build pull reset health deps-health obs-health urls \
         fmt test lint clean
 
 help: ## Show available commands
@@ -76,12 +79,23 @@ deps-health: ## Check dependency readiness in containers
 	echo "== Redpanda =="; \
 	$(DC) --project-name $(PROJECT) --env-file $(ENV_FILE) -f $(COMPOSE_FILE) exec -T redpanda curl -fsS http://localhost:9644/v1/status/ready && echo && echo OK
 
+obs-health: ## Check observability endpoints (best-effort)
+	@set -e; \
+	echo "== OTEL Collector =="; curl -fsS $(OTEL_HEALTH_URL) && echo && echo OK || echo "NOT OK"; \
+	echo "== Prometheus =="; curl -fsS $(PROM_URL)/-/ready && echo && echo OK || echo "NOT OK"; \
+	echo "== Grafana =="; curl -fsS $(GRAFANA_URL)/api/health && echo && echo OK || echo "NOT OK"; \
+	echo "== Loki =="; curl -fsS $(LOKI_URL)/ready && echo && echo OK || echo "NOT OK"; \
+	echo "== Tempo =="; curl -fsS $(TEMPO_URL)/ready && echo && echo OK || echo "NOT OK"
+
 urls: ## Print useful local URLs
 	@echo "Post Service:        $(POST_SERVICE_URL)"
 	@echo "Social Graph Service: $(GRAPH_SERVICE_URL)"
 	@echo "Feed Service:        $(FEED_SERVICE_URL)"
 	@echo "Grafana:             $(GRAFANA_URL)"
 	@echo "Prometheus:          $(PROM_URL)"
+	@echo "Loki:                $(LOKI_URL)"
+	@echo "Tempo:               $(TEMPO_URL)"
+	@echo "OTEL Collector:      $(OTEL_HEALTH_URL)"
 
 # Optional: formatting/testing placeholders (wire them once code exists)
 fmt: ## Format code (placeholder - implement per language/tooling)
