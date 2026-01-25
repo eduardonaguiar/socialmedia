@@ -1,0 +1,190 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using FeedService.Data;
+using FeedService.Metrics;
+using FeedService.Models;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using StackExchange.Redis;
+
+var builder = WebApplication.CreateBuilder(args);
+
+const string serviceName = "feed-service";
+
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    options.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+});
+
+var redisSettings = RedisSettings.FromConfiguration(builder.Configuration);
+var redisOptions = redisSettings.ToConfigurationOptions();
+var redisConnection = ConnectionMultiplexer.Connect(redisOptions);
+
+builder.Services.AddSingleton<IConnectionMultiplexer>(redisConnection);
+builder.Services.AddSingleton<FeedRepository>();
+builder.Services.AddSingleton<FeedMetrics>();
+
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resourceBuilder =>
+    {
+        resourceBuilder
+            .AddService(serviceName)
+            .AddAttributes(new Dictionary<string, object>
+            {
+                ["deployment.environment"] = builder.Environment.EnvironmentName.ToLowerInvariant()
+            });
+    })
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddStackExchangeRedisInstrumentation(redisConnection)
+        .AddOtlpExporter())
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddMeter("FeedService")
+        .AddOtlpExporter());
+
+var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.MapGet("/feed", async (
+    HttpRequest request,
+    FeedRepository repository,
+    FeedMetrics metrics,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!TryGetUserId(request, out var userId))
+    {
+        return Results.BadRequest(new ErrorResponse(
+            new ErrorDetails("missing_user_id", "X-User-Id header is required.")));
+    }
+
+    if (!TryGetLimit(request, out var limit, out var errorResponse))
+    {
+        return Results.BadRequest(errorResponse);
+    }
+
+    var cursorRaw = request.Query["cursor"].ToString();
+    CursorPayload? cursor = null;
+
+    if (!string.IsNullOrWhiteSpace(cursorRaw))
+    {
+        if (!CursorCodec.TryDecode(cursorRaw, out var payload))
+        {
+            return Results.BadRequest(new ErrorResponse(
+                new ErrorDetails("invalid_cursor", "Cursor is invalid.")));
+        }
+
+        cursor = payload;
+    }
+
+    using var timer = metrics.TrackFeedList();
+
+    try
+    {
+        var entries = await repository.GetFeedPageAsync(userId, cursor, limit, cancellationToken);
+        var items = entries
+            .Select(entry => new FeedItemDto(entry.PostId, entry.Score))
+            .ToList();
+
+        var nextCursor = entries.Count == limit
+            ? CursorCodec.Encode(new CursorPayload(entries[^1].Score, entries[^1].PostId))
+            : null;
+
+        return Results.Ok(new FeedPageResponse(items, nextCursor));
+    }
+    catch (RedisException ex)
+    {
+        logger.LogWarning(ex, "Redis unavailable while serving feed for user {UserId}", userId);
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.MapGet("/health", async (IConnectionMultiplexer connection, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var db = connection.GetDatabase();
+        await db.PingAsync();
+        return Results.Ok(new { status = "ok" });
+    }
+    catch
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
+app.Run();
+
+static bool TryGetUserId(HttpRequest request, out string userId)
+{
+    userId = string.Empty;
+    if (!request.Headers.TryGetValue("X-User-Id", out var values))
+    {
+        return false;
+    }
+
+    var raw = values.ToString();
+    if (string.IsNullOrWhiteSpace(raw))
+    {
+        return false;
+    }
+
+    userId = raw;
+    return true;
+}
+
+static bool TryGetLimit(HttpRequest request, out int limit, out ErrorResponse? error)
+{
+    error = null;
+    limit = PaginationOptions.DefaultLimit;
+
+    if (!request.Query.TryGetValue("limit", out var limitValues) ||
+        string.IsNullOrWhiteSpace(limitValues))
+    {
+        limit = PaginationOptions.DefaultLimit;
+        return true;
+    }
+
+    if (!int.TryParse(limitValues.ToString(), out var parsedLimit))
+    {
+        error = new ErrorResponse(new ErrorDetails("invalid_limit", "Limit must be a number."));
+        return false;
+    }
+
+    limit = PaginationOptions.NormalizeLimit(parsedLimit);
+    return true;
+}
+
+internal sealed record RedisSettings(string Host, int Port)
+{
+    public static RedisSettings FromConfiguration(IConfiguration configuration)
+    {
+        var host = configuration["REDIS_HOST"] ?? "localhost";
+        var port = int.TryParse(configuration["REDIS_PORT"], out var parsedPort) ? parsedPort : 6379;
+
+        return new RedisSettings(host, port);
+    }
+
+    public ConfigurationOptions ToConfigurationOptions()
+    {
+        var options = new ConfigurationOptions
+        {
+            AbortOnConnectFail = false
+        };
+        options.EndPoints.Add(Host, Port);
+        return options;
+    }
+}

@@ -20,9 +20,12 @@ Reference (PT-BR): `docs/study/05-DATA_MODEL.md`, `docs/study/08-CONSISTENCY.md`
 Reference (PT-BR): `docs/study/04-ARCHITECTURE.md`, `docs/study/05-DATA_MODEL.md`.
 
 ### 3) Feed Service (derived read model)
-- Serves feed via Redis ZSET (hot window)
-- Cursor pagination using (score, tie-breaker)
-- Hybrid merge: derived feed + celebrity pull
+- Serves feed via Redis ZSET hot window (`case1:feed:{user_id}`)
+- Cursor pagination using `(score, tie-breaker)` with deterministic ordering
+- Read path only (no hydration); returns post references
+- Failure mode: Redis unavailable -> 503 to keep cache state explicit
+
+Reference (PT-BR): `docs/study/06-FEED_STRATEGY.md`, `docs/study/07-CACHING.md`, `docs/study/08-CONSISTENCY.md`, `docs/study/09-FAILURES.md`.
 
 ### 4) Fanout Worker (derived builder)
 - Consumes `PostCreated`
@@ -44,5 +47,5 @@ Reference (PT-BR): `docs/study/04-ARCHITECTURE.md`, `docs/study/05-DATA_MODEL.md
 - At-least-once processing + dedup/idempotency
 - Skew-aware: celebrity threshold and selective fan-out
 - Graceful degradation:
-  - Redis down → fallback path
+  - Redis down → explicit 503 today (fallback path later)
   - Kafka lag → partial pull merge

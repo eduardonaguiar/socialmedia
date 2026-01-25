@@ -8,7 +8,9 @@
 - Push: fan-out on write (materialize feed on post).
 - Pull: fan-out on read (compose feed at read time).
 - Hot window: last N items kept in fast store/cache.
+- Cursor pagination: stateless paging using an opaque cursor (score + tie-breaker).
 - Backpressure: flow control when downstream is overloaded.
 - Idempotency: repeated processing yields same end state.
 - Tie-breaker: deterministic ordering secondary key (timestamp + id).
 - Threshold: cutoff value (e.g., celebrity threshold).
+- ZSET: Redis sorted set supporting score + member ordering.

@@ -3,6 +3,7 @@
 ## Modelo de consistência
 - **Eventual**: propagação do post para o feed ocorre em segundos.
 - **At-least-once**: duplicatas são esperadas.
+- **Feed derivado**: Redis é reconstruível; ausência de item não invalida a verdade no Post Service.
 
 ## Idempotência
 - Fanout Worker deve tratar eventos repetidos sem duplicar itens no feed.
@@ -17,7 +18,8 @@
 
 ## Cursor e ordenação
 - Itens ordenados por tempo, com **desempate estável**.
-- Cursor guarda `score` + `tie-breaker`.
+- Cursor guarda `score` + `member` e é base64 JSON opaco.
+- Para scores iguais, aplica-se `member < last_member` para evitar repetição.
 
 ## Stubs
-- [TODO] Definir formato do cursor e encoding.
+- [TODO] Definir política de reconciliação se o feed derivado estiver incompleto.

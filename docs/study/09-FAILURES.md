@@ -2,13 +2,13 @@
 
 ## Cenários de falha esperados
 - **Kafka/Redpanda indisponível** → atraso na propagação.
-- **Redis indisponível** → leitura em modo pull parcial ou erro controlado.
+- **Redis indisponível** → Feed Service responde **503** (falha explícita).
 - **Postgres lento** → latência maior em criação/consulta de posts.
 
 ## Estratégias de mitigação
 - Retentativas com backoff no worker.
 - Idempotência para suportar duplicatas.
-- Queda graciosa com mensagens claras ao cliente.
+- Queda graciosa com mensagens claras ao cliente (código 503 no feed).
 
 ## Sinais para observabilidade
 - Lag do consumidor.
