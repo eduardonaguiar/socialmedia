@@ -30,7 +30,7 @@ FEED_SERVICE_URL  ?= http://localhost:8083
 GRAFANA_URL       ?= http://localhost:3000
 PROM_URL          ?= http://localhost:9090
 
-.PHONY: help up down restart ps logs build pull reset health urls \
+.PHONY: help up down restart ps logs build pull reset health deps-health urls \
         fmt test lint clean
 
 help: ## Show available commands
@@ -66,6 +66,15 @@ health: ## Check service health endpoints (best-effort)
 	echo "== Post Service ==";  curl -fsS $(POST_SERVICE_URL)/health  && echo && echo OK || echo "NOT OK"; \
 	echo "== Graph Service =="; curl -fsS $(GRAPH_SERVICE_URL)/health && echo && echo OK || echo "NOT OK"; \
 	echo "== Feed Service ==";  curl -fsS $(FEED_SERVICE_URL)/health  && echo && echo OK || echo "NOT OK"
+
+deps-health: ## Check dependency readiness in containers
+	@set -e; \
+	echo "== Postgres =="; \
+	$(DC) --project-name $(PROJECT) --env-file $(ENV_FILE) -f $(COMPOSE_FILE) exec -T postgres sh -c 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"' && echo OK; \
+	echo "== Redis =="; \
+	$(DC) --project-name $(PROJECT) --env-file $(ENV_FILE) -f $(COMPOSE_FILE) exec -T redis redis-cli ping | grep -q PONG && echo OK; \
+	echo "== Redpanda =="; \
+	$(DC) --project-name $(PROJECT) --env-file $(ENV_FILE) -f $(COMPOSE_FILE) exec -T redpanda curl -fsS http://localhost:9644/v1/status/ready && echo && echo OK
 
 urls: ## Print useful local URLs
 	@echo "Post Service:        $(POST_SERVICE_URL)"

@@ -25,6 +25,20 @@
 - Evento principal: `post.created.v1`.
 - Consumidores devem ser idempotentes (duplicatas são esperadas).
 
+## Base local (Docker Compose)
+Para estudo local, iniciamos apenas as dependências centrais via Docker Compose:
+
+- **PostgreSQL** (dados autoritativos).
+- **Redis** (janela quente do feed, derivado).
+- **Redpanda** (API Kafka para eventos).
+
+Convenções do stack local:
+- Rede única `case1-net` para comunicação previsível.
+- Volumes nomeados `pg_data`, `redpanda_data` e `redis_data`.
+- Healthchecks rápidos para suportar `depends_on: condition: service_healthy`.
+- Portas expostas para desenvolvimento: 5432 (Postgres), 6379 (Redis), 9092 (Kafka) e 9644 (admin/health Redpanda).
+- `.env` centraliza credenciais/hosts para manter ergonomia.
+
 ## Pontos de atenção (stubs)
 - [TODO] Detalhar partições do tópico e chaveamento.
 - [TODO] Definir política de TTL na hot window.
