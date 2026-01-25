@@ -3,8 +3,11 @@
 ## Services
 ### 1) Post Service (authoritative)
 - Stores post content and metadata
-- Emits `PostCreated` event (transactional outbox + publisher)
+- Emits `PostCreated` event (transactional outbox + background publisher)
 - API: create/get
+- Outbox: `outbox_messages` with locking to avoid concurrent publish
+
+Reference (PT-BR): `docs/study/05-DATA_MODEL.md`, `docs/study/08-CONSISTENCY.md`.
 
 ### 2) Social Graph Service (authoritative)
 - Stores follow edges

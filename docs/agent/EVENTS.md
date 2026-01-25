@@ -7,15 +7,17 @@ Topic: `post.created.v1`
 - Produced by Post Service after the post is committed (outbox).
 - Consumers MUST assume at-least-once delivery (duplicates possible).
 - Consumers MUST be idempotent.
+- Message key: `author_id` (ordering per author).
 
 ### Payload (logical)
 - event_id (uuid)
 - occurred_at (utc)
 - post_id
-- author_id
-- created_at (utc, ms precision)
-- visibility (public | followers_only) [optional for lab; default public]
+- author_id (string)
+- created_at (utc)
 - schema_version = 1
+
+See also: `docs/study/05-DATA_MODEL.md` and `docs/study/08-CONSISTENCY.md`.
 
 ### Processing guarantees
 - Fanout Worker:

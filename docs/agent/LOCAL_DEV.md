@@ -33,6 +33,28 @@ on the `case1-net` network. This matches the local architecture described in PT-
 make up
 ```
 
+## Post Service (authoritative)
+The Post Service listens on `http://localhost:8081` and expects the `X-User-Id` header.
+Content is limited to 280 characters. See `docs/study/05-DATA_MODEL.md`.
+
+### Create a post
+```bash
+curl -fsS -X POST http://localhost:8081/posts \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user-123" \
+  -d '{"content":"hello from post-service"}'
+```
+
+Swagger (dev only):
+```bash
+open http://localhost:8081/swagger
+```
+
+### Get a post by id
+```bash
+curl -fsS http://localhost:8081/posts/<post_id>
+```
+
 ### Verify dependencies are ready
 ```bash
 make deps-health

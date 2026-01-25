@@ -75,6 +75,44 @@ services:
       retries: 10
       start_period: 10s
 
+  post-service:
+    build:
+      context: .
+      dockerfile: services/post-service/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-case1_feed}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-case1_feed}
+      POSTGRES_DB: ${POSTGRES_DB:-case1_feed}
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_CLIENT_ID: case1-feed
+      KAFKA_SECURITY_PROTOCOL: PLAINTEXT
+      KAFKA_TOPIC_POST_CREATED: ${KAFKA_TOPIC_POST_CREATED:-post.created.v1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_SERVICE_NAME: post-service
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=case1,service.version=0.1.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - case1-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/health > /dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.96.0
     restart: unless-stopped
