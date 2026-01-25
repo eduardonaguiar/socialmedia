@@ -106,6 +106,7 @@ lint: ## Lint code (placeholder - implement per language/tooling)
 
 test: ## Run tests (placeholder - implement once services exist)
 	@dotnet test services/post-service/Tests/PostService.Tests.csproj
+	@dotnet test services/graph-service/Tests/GraphService.Tests.csproj
 
 clean: ## Local cleanup (non-destructive)
 	@echo "Nothing to clean yet."

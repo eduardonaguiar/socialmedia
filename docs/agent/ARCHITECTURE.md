@@ -14,7 +14,10 @@ Reference (PT-BR): `docs/study/05-DATA_MODEL.md`, `docs/study/08-CONSISTENCY.md`
 - Maintains two materializations:
   - `following_by_user` (out edges)
   - `followers_by_user` (in edges)
-- API: follow/unfollow + list following/followers
+- API: follow/unfollow + list following/followers with cursor pagination
+- Deterministic ordering: `followed_at_utc DESC, <id> DESC` for stable cursors
+
+Reference (PT-BR): `docs/study/04-ARCHITECTURE.md`, `docs/study/05-DATA_MODEL.md`.
 
 ### 3) Feed Service (derived read model)
 - Serves feed via Redis ZSET (hot window)

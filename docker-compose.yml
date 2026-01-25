@@ -113,6 +113,38 @@ services:
       retries: 5
       start_period: 10s
 
+  graph-service:
+    build:
+      context: .
+      dockerfile: services/graph-service/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8082:8082"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-case1_feed}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-case1_feed}
+      POSTGRES_DB: ${POSTGRES_DB:-case1_feed}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_SERVICE_NAME: graph-service
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=case1,service.version=0.1.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - case1-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8082/health > /dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.96.0
     restart: unless-stopped
