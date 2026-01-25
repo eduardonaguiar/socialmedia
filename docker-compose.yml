@@ -145,6 +145,35 @@ services:
       retries: 5
       start_period: 10s
 
+  feed-service:
+    build:
+      context: .
+      dockerfile: services/feed-service/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8083:8083"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_SERVICE_NAME: feed-service
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=case1,service.version=0.1.0
+    depends_on:
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - case1-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8083/health > /dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.96.0
     restart: unless-stopped

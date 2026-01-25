@@ -11,11 +11,17 @@
 - **Celebridades**: não fan-out total; posts são mesclados no read.
 - **Graph Service**: fornece lista de seguidores (materialização de entrada) para fan-out.
 
+## Escopo desta tarefa (read path)
+- Implementa **apenas leitura** do feed via Redis ZSET (hot window).
+- Não há fan-out neste momento (isso é feito na tarefa 07).
+- O feed retorna **referências** (`post_id`), sem hidratação de conteúdo.
+
 ## Paginação por cursor
-- Ordenação por **timestamp (score)**.
-- Desempate por **post_id** (ou `post_id+author_id`).
-- Cursor contém `(score, tie-breaker)`.
+- Ordenação por **timestamp (score = created_at_ms)**.
+- Desempate por **post_id** (ordem lexicográfica).
+- Cursor contém `(score, member)` e é **opaco** (base64 JSON).
+- Estratégia: buscar `score < last_score` + `score == last_score` com `member < last_member`.
+- Limites: default **20**, máximo **100**.
 
 ## Stubs para implementação
-- [TODO] Definir algoritmo de merge para celebridades.
-- [TODO] Definir limites de página e window size.
+- [TODO] Definir algoritmo de merge para celebridades (read híbrido).

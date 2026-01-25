@@ -101,6 +101,27 @@ Swagger (dev only):
 open http://localhost:8082/swagger
 ```
 
+## Feed Service (derived read model)
+The Feed Service listens on `http://localhost:8083` and expects the `X-User-Id` header for
+feed reads. It returns post references from the Redis ZSET hot window.
+
+### Get first page (empty feed is valid)
+```bash
+curl -fsS "http://localhost:8083/feed?limit=2" \
+  -H "X-User-Id: user-123"
+```
+
+### Get next page (cursor pagination)
+```bash
+curl -fsS "http://localhost:8083/feed?cursor=<cursor>&limit=2" \
+  -H "X-User-Id: user-123"
+```
+
+Swagger (dev only):
+```bash
+open http://localhost:8083/swagger
+```
+
 Manual checks:
 ```bash
 curl -fsS http://localhost:9090/-/ready
