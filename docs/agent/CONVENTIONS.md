@@ -27,3 +27,9 @@
 - Authoritative tables normalized enough for clarity
 - Derived views optimized for reads (Redis ZSET hot window)
 - Never query derived data to make authoritative decisions
+
+## Docker Compose conventions
+- Use a single bridge network: `case1-net`
+- Dependency service names are fixed: `postgres`, `redis`, `redpanda`
+- Named volumes: `pg_data`, `redpanda_data`, `redis_data`
+- Local compose design rationale (PT-BR): see `docs/study/04-ARCHITECTURE.md`
