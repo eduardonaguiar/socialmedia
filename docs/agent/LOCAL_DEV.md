@@ -55,6 +55,11 @@ open http://localhost:8081/swagger
 curl -fsS http://localhost:8081/posts/<post_id>
 ```
 
+### List posts by author (timeline)
+```bash
+curl -fsS "http://localhost:8081/authors/user-123/posts?limit=5"
+```
+
 ### Verify dependencies are ready
 ```bash
 make deps-health
@@ -96,6 +101,16 @@ curl -fsS "http://localhost:8082/users/user-123/following?cursor=<cursor>&limit=
 curl -fsS "http://localhost:8082/users/user-456/followers?limit=2"
 ```
 
+### Get user stats (followers count)
+```bash
+curl -fsS "http://localhost:8082/users/user-456/stats"
+```
+
+### List celebrity following
+```bash
+curl -fsS "http://localhost:8082/users/user-123/following/celebrity?limit=2"
+```
+
 Swagger (dev only):
 ```bash
 open http://localhost:8082/swagger
@@ -103,7 +118,7 @@ open http://localhost:8082/swagger
 
 ## Feed Service (derived read model)
 The Feed Service listens on `http://localhost:8083` and expects the `X-User-Id` header for
-feed reads. It returns post references from the Redis ZSET hot window.
+feed reads. It returns post references and merges Redis ZSET with celebrity pull.
 
 ### Get first page (empty feed is valid)
 ```bash

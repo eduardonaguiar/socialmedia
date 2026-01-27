@@ -13,6 +13,8 @@ public sealed class FanoutMetrics
     public Counter<long> RedisWrites { get; }
     public Counter<long> Failures { get; }
     public Histogram<double> ProcessingDurationMs { get; }
+    public Counter<long> FanoutSkippedCelebrity { get; }
+    public Histogram<double> CelebrityClassificationDurationMs { get; }
 
     public FanoutMetrics()
     {
@@ -23,9 +25,14 @@ public sealed class FanoutMetrics
         RedisWrites = _meter.CreateCounter<long>("fanout_redis_writes_total");
         Failures = _meter.CreateCounter<long>("fanout_failures_total");
         ProcessingDurationMs = _meter.CreateHistogram<double>("fanout_processing_duration_ms", unit: "ms");
+        FanoutSkippedCelebrity = _meter.CreateCounter<long>("fanout_skipped_celebrity_total");
+        CelebrityClassificationDurationMs =
+            _meter.CreateHistogram<double>("fanout_celebrity_classification_duration_ms", unit: "ms");
     }
 
     public IDisposable TrackProcessing() => new StopwatchScope(ProcessingDurationMs);
+
+    public IDisposable TrackCelebrityClassification() => new StopwatchScope(CelebrityClassificationDurationMs);
 
     public void RecordFailure(string cause)
     {

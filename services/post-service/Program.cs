@@ -154,6 +154,48 @@ app.MapGet("/posts/{postId:guid}", async (
     return Results.Ok(post);
 });
 
+app.MapGet("/authors/{authorId}/posts", async (
+    HttpRequest request,
+    string authorId,
+    PostRepository repository,
+    CancellationToken cancellationToken) =>
+{
+    if (!TryGetLimit(request, out var limit, out var errorResponse))
+    {
+        return Results.BadRequest(errorResponse);
+    }
+
+    var cursorRaw = request.Query["cursor"].ToString();
+    DateTime? cursorTimestamp = null;
+    Guid? cursorPostId = null;
+
+    if (!string.IsNullOrWhiteSpace(cursorRaw))
+    {
+        if (!CursorCodec.TryDecode(cursorRaw, out var payload))
+        {
+            return Results.BadRequest(new ErrorResponse(
+                new ErrorDetails("invalid_cursor", "Cursor is invalid.")));
+        }
+
+        cursorTimestamp = payload.TimestampUtc;
+        cursorPostId = payload.PostId;
+    }
+
+    var results = await repository.ListByAuthorAsync(authorId, cursorTimestamp, cursorPostId, limit, cancellationToken);
+
+    var items = results
+        .Select(item => new AuthorPostDto(
+            item.PostId,
+            new DateTimeOffset(item.CreatedAtUtc).ToUnixTimeMilliseconds()))
+        .ToList();
+
+    var nextCursor = results.Count == limit
+        ? CursorCodec.Encode(new CursorPayload(results[^1].CreatedAtUtc, results[^1].PostId))
+        : null;
+
+    return Results.Ok(new AuthorPostsPageResponse(items, nextCursor));
+});
+
 app.MapGet("/health", async (NpgsqlDataSource source, CancellationToken cancellationToken) =>
 {
     try
@@ -180,6 +222,28 @@ static async Task ApplyMigrationsAsync(IServiceProvider services)
     var migrationsPath = Path.Combine(AppContext.BaseDirectory, "Migrations");
     logger.LogInformation("Applying migrations from {Path}", migrationsPath);
     await migrator.RunAsync(migrationsPath, CancellationToken.None);
+}
+
+static bool TryGetLimit(HttpRequest request, out int limit, out ErrorResponse? error)
+{
+    error = null;
+    limit = PaginationOptions.DefaultLimit;
+
+    if (!request.Query.TryGetValue("limit", out var limitValues) ||
+        string.IsNullOrWhiteSpace(limitValues))
+    {
+        limit = PaginationOptions.DefaultLimit;
+        return true;
+    }
+
+    if (!int.TryParse(limitValues.ToString(), out var parsedLimit))
+    {
+        error = new ErrorResponse(new ErrorDetails("invalid_limit", "Limit must be a number."));
+        return false;
+    }
+
+    limit = PaginationOptions.NormalizeLimit(parsedLimit);
+    return true;
 }
 
 internal sealed record PostgresSettings(string ConnectionString)

@@ -5,7 +5,18 @@ using FanoutWorker.Options;
 
 namespace FanoutWorker.Services;
 
-public sealed class GraphClient
+public interface IGraphClient
+{
+    IAsyncEnumerable<PageResponse<FollowerDto>> GetFollowersAsync(
+        string authorId,
+        int pageSize,
+        int? maxPages,
+        CancellationToken cancellationToken);
+
+    Task<UserStatsDto> GetUserStatsAsync(string userId, CancellationToken cancellationToken);
+}
+
+public sealed class GraphClient : IGraphClient
 {
     private readonly HttpClient _httpClient;
     private readonly FanoutMetrics _metrics;
@@ -70,5 +81,28 @@ public sealed class GraphClient
 
             cursor = response.NextCursor;
         }
+    }
+
+    public async Task<UserStatsDto> GetUserStatsAsync(string userId, CancellationToken cancellationToken)
+    {
+        var path = $"/users/{Uri.EscapeDataString(userId)}/stats";
+
+        using var activity = FanoutTelemetry.ActivitySource.StartActivity("graph.user_stats");
+        activity?.SetTag("graph.user_id", userId);
+
+        var response = await RetryHelper.ExecuteAsync(
+            async token =>
+            {
+                var message = await _httpClient.GetAsync(path, token);
+                message.EnsureSuccessStatusCode();
+                var payload = await message.Content.ReadFromJsonAsync<UserStatsDto>(cancellationToken: token);
+                return payload ?? new UserStatsDto(userId, 0);
+            },
+            _retrySettings,
+            _logger,
+            "graph.user_stats",
+            cancellationToken);
+
+        return response;
     }
 }

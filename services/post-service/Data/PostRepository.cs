@@ -85,4 +85,41 @@ public sealed class PostRepository
 
         return new PostDto(postId, authorId, content, createdAtUtc);
     }
+
+    public async Task<IReadOnlyList<PostReference>> ListByAuthorAsync(
+        string authorId,
+        DateTime? cursorTimestampUtc,
+        Guid? cursorPostId,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT post_id, created_at_utc
+            FROM posts
+            WHERE author_id = @author_id
+              AND (@cursor_ts IS NULL OR (created_at_utc, post_id) < (@cursor_ts, @cursor_id))
+            ORDER BY created_at_utc DESC, post_id DESC
+            LIMIT @limit;
+            """;
+
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(sql, connection);
+        cmd.Parameters.AddWithValue("author_id", authorId);
+        cmd.Parameters.AddWithValue("cursor_ts", (object?)cursorTimestampUtc ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("cursor_id", (object?)cursorPostId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("limit", limit);
+
+        var results = new List<PostReference>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(new PostReference(
+                reader.GetGuid(0),
+                reader.GetDateTime(1)));
+        }
+
+        return results;
+    }
 }
+
+public sealed record PostReference(Guid PostId, DateTime CreatedAtUtc);
