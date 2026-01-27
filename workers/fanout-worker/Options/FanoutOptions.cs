@@ -19,7 +19,8 @@ public sealed record FanoutOptions(
     TimeSpan DedupTtl,
     RetrySettings GraphRetry,
     RetrySettings RedisRetry,
-    TimeSpan FailureBackoff)
+    TimeSpan FailureBackoff,
+    long CelebrityFollowerThreshold)
 {
     public static FanoutOptions FromConfiguration(IConfiguration configuration)
     {
@@ -28,6 +29,9 @@ public sealed record FanoutOptions(
         var maxPages = int.TryParse(configuration["FOLLOWER_MAX_PAGES"], out var parsedMaxPages) ? parsedMaxPages : 0;
         var ttlDays = int.TryParse(configuration["DEDUP_TTL_DAYS"], out var parsedDays) ? parsedDays : 7;
         var failureBackoffMs = int.TryParse(configuration["FANOUT_FAILURE_BACKOFF_MS"], out var parsedBackoff) ? parsedBackoff : 1000;
+        var celebrityThreshold = long.TryParse(configuration["CELEBRITY_FOLLOWER_THRESHOLD"], out var parsedThreshold)
+            ? parsedThreshold
+            : 100_000;
 
         var graphRetry = RetrySettings.FromConfiguration(configuration, "GRAPH_RETRY", 3);
         var redisRetry = RetrySettings.FromConfiguration(configuration, "REDIS_RETRY", 3);
@@ -39,6 +43,7 @@ public sealed record FanoutOptions(
             TimeSpan.FromDays(ttlDays),
             graphRetry,
             redisRetry,
-            TimeSpan.FromMilliseconds(failureBackoffMs));
+            TimeSpan.FromMilliseconds(failureBackoffMs),
+            celebrityThreshold);
     }
 }

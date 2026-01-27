@@ -5,7 +5,12 @@ using StackExchange.Redis;
 
 namespace FanoutWorker.Services;
 
-public sealed class FeedWriter
+public interface IFeedWriter
+{
+    Task AddToFeedAsync(string followerId, Guid postId, long createdAtMs, CancellationToken cancellationToken);
+}
+
+public sealed class FeedWriter : IFeedWriter
 {
     private readonly IConnectionMultiplexer _connection;
     private readonly FanoutMetrics _metrics;

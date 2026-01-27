@@ -11,9 +11,13 @@
   - Rank do ZSET é **ascendente** (0 = item mais antigo).
 - **TTL**: opcional para liberar memória após inatividade.
 
+## Cache no read híbrido
+- **Lista de celebridades seguidas**: cache curto (60–300s) no Feed Service.
+- **Timeline por autor (celebridade)**: cache curto (15–60s) para reduzir thundering herd.
+- TTLs com **jitter** para evitar expiração simultânea.
+- Cache não é fonte de verdade; serve apenas para aliviar chamadas.
+
 ## Degradação
 - Nesta fase, o Feed Service retorna **503** quando Redis está indisponível,
   para tornar a falha explícita e mensurável.
-
-## Stubs
-- [TODO] Definir TTL de ZSET e política de compactação.
+- Se o pull falhar, retornar somente os itens do ZSET (feed parcial).

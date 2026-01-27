@@ -3,7 +3,13 @@ using StackExchange.Redis;
 
 namespace FanoutWorker.Services;
 
-public sealed class DedupStore
+public interface IDedupStore
+{
+    Task<bool> TryClaimAsync(Guid eventId, TimeSpan ttl, CancellationToken cancellationToken);
+    Task ReleaseAsync(Guid eventId);
+}
+
+public sealed class DedupStore : IDedupStore
 {
     private readonly IConnectionMultiplexer _connection;
     private readonly RetrySettings _retry;

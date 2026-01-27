@@ -4,7 +4,7 @@
 ### 1) Post Service (authoritative)
 - Stores post content and metadata
 - Emits `PostCreated` event (transactional outbox + background publisher)
-- API: create/get
+- API: create/get + author timeline (cursor)
 - Outbox: `outbox_messages` with locking to avoid concurrent publish
 
 Reference (PT-BR): `docs/study/05-DATA_MODEL.md`, `docs/study/08-CONSISTENCY.md`.
@@ -14,28 +14,31 @@ Reference (PT-BR): `docs/study/05-DATA_MODEL.md`, `docs/study/08-CONSISTENCY.md`
 - Maintains two materializations:
   - `following_by_user` (out edges)
   - `followers_by_user` (in edges)
-- API: follow/unfollow + list following/followers with cursor pagination
+- Maintains `user_stats` with `followers_count`
+- API: follow/unfollow + list following/followers + stats + celebrity-following
 - Deterministic ordering: `followed_at_utc DESC, <id> DESC` for stable cursors
 
-Reference (PT-BR): `docs/study/04-ARCHITECTURE.md`, `docs/study/05-DATA_MODEL.md`.
+Reference (PT-BR): `docs/study/04-ARCHITECTURE.md`, `docs/study/05-DATA_MODEL.md`, `docs/study/10-SCALING.md`.
 
 ### 3) Feed Service (derived read model)
 - Serves feed via Redis ZSET hot window (`case1:feed:{user_id}`)
 - Cursor pagination using `(score, tie-breaker)` with deterministic ordering
-- Read path only (no hydration); returns post references
+- Hybrid read path: merge push ZSET with pull timelines for celebrity authors
+- Returns post references only (no hydration)
 - Failure mode: Redis unavailable -> 503 to keep cache state explicit
 
-Reference (PT-BR): `docs/study/06-FEED_STRATEGY.md`, `docs/study/07-CACHING.md`, `docs/study/08-CONSISTENCY.md`, `docs/study/09-FAILURES.md`.
+Reference (PT-BR): `docs/study/06-FEED_STRATEGY.md`, `docs/study/07-CACHING.md`, `docs/study/08-CONSISTENCY.md`, `docs/study/09-FAILURES.md`, `docs/study/10-SCALING.md`.
 
 ### 4) Fanout Worker (derived builder)
 - Consumes `PostCreated` (Kafka/Redpanda)
-- Resolves followers via Graph Service (cursor pagination)
+- Classifies author via Graph Service stats
+- Resolves followers via Graph Service (cursor pagination) only for normal authors
 - Updates Redis ZSET hot window (`case1:feed:{user_id}`) idempotently
 - Deduplicates by `event_id` with TTL (Redis NX) and relies on ZSET uniqueness
 - Trims feed to hot window size after writes
-- Current scope: push-only fan-out (celebrity hybrid comes later)
+- Skips fan-out for celebrity authors (hybrid)
 
-Reference (PT-BR): `docs/study/06-FEED_STRATEGY.md`, `docs/study/08-CONSISTENCY.md`, `docs/study/09-FAILURES.md`.
+Reference (PT-BR): `docs/study/06-FEED_STRATEGY.md`, `docs/study/08-CONSISTENCY.md`, `docs/study/09-FAILURES.md`, `docs/study/10-SCALING.md`.
 
 ## Data classification
 - Authoritative:
@@ -52,4 +55,4 @@ Reference (PT-BR): `docs/study/06-FEED_STRATEGY.md`, `docs/study/08-CONSISTENCY.
 - Skew-aware: celebrity threshold and selective fan-out
 - Graceful degradation:
   - Redis down → explicit 503 today (fallback path later)
-  - Kafka lag → partial pull merge
+  - Graph/Post down → partial feed (push-only)
