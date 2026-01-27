@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using FeedService.Data;
 using FeedService.Metrics;
 using FeedService.Models;
+using FeedService.Services;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -22,12 +23,28 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 var redisSettings = RedisSettings.FromConfiguration(builder.Configuration);
+var feedOptions = FeedOptions.FromConfiguration(builder.Configuration);
+var graphSettings = GraphSettings.FromConfiguration(builder.Configuration);
+var postSettings = PostSettings.FromConfiguration(builder.Configuration);
 var redisOptions = redisSettings.ToConfigurationOptions();
 var redisConnection = ConnectionMultiplexer.Connect(redisOptions);
 
 builder.Services.AddSingleton<IConnectionMultiplexer>(redisConnection);
 builder.Services.AddSingleton<FeedRepository>();
 builder.Services.AddSingleton<FeedMetrics>();
+builder.Services.AddSingleton(feedOptions);
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<FeedAggregator>();
+
+builder.Services.AddHttpClient<GraphClient>(client =>
+{
+    client.BaseAddress = new Uri(graphSettings.BaseUrl);
+});
+
+builder.Services.AddHttpClient<PostClient>(client =>
+{
+    client.BaseAddress = new Uri(postSettings.BaseUrl);
+});
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resourceBuilder =>
@@ -40,6 +57,7 @@ builder.Services.AddOpenTelemetry()
             });
     })
     .WithTracing(tracing => tracing
+        .AddSource(FeedTelemetry.ActivitySourceName)
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
         .AddStackExchangeRedisInstrumentation(redisConnection)
@@ -60,7 +78,7 @@ if (app.Environment.IsDevelopment())
 
 app.MapGet("/feed", async (
     HttpRequest request,
-    FeedRepository repository,
+    FeedAggregator aggregator,
     FeedMetrics metrics,
     ILogger<Program> logger,
     CancellationToken cancellationToken) =>
@@ -94,13 +112,13 @@ app.MapGet("/feed", async (
 
     try
     {
-        var entries = await repository.GetFeedPageAsync(userId, cursor, limit, cancellationToken);
-        var items = entries
+        var merged = await aggregator.GetFeedAsync(userId, cursor, limit, cancellationToken);
+        var items = merged
             .Select(entry => new FeedItemDto(entry.PostId, entry.Score))
             .ToList();
 
-        var nextCursor = entries.Count == limit
-            ? CursorCodec.Encode(new CursorPayload(entries[^1].Score, entries[^1].PostId))
+        var nextCursor = merged.Count == limit
+            ? CursorCodec.Encode(new CursorPayload(merged[^1].Score, merged[^1].PostId))
             : null;
 
         return Results.Ok(new FeedPageResponse(items, nextCursor));
@@ -186,5 +204,23 @@ internal sealed record RedisSettings(string Host, int Port)
         };
         options.EndPoints.Add(Host, Port);
         return options;
+    }
+}
+
+internal sealed record GraphSettings(string BaseUrl)
+{
+    public static GraphSettings FromConfiguration(IConfiguration configuration)
+    {
+        var baseUrl = configuration["GRAPH_SERVICE_URL"] ?? "http://localhost:8082";
+        return new GraphSettings(baseUrl);
+    }
+}
+
+internal sealed record PostSettings(string BaseUrl)
+{
+    public static PostSettings FromConfiguration(IConfiguration configuration)
+    {
+        var baseUrl = configuration["POST_SERVICE_URL"] ?? "http://localhost:8081";
+        return new PostSettings(baseUrl);
     }
 }

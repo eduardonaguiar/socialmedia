@@ -13,17 +13,17 @@ public enum ProcessingOutcome
 
 public sealed class FanoutProcessor
 {
-    private readonly GraphClient _graphClient;
-    private readonly FeedWriter _feedWriter;
-    private readonly DedupStore _dedupStore;
+    private readonly IGraphClient _graphClient;
+    private readonly IFeedWriter _feedWriter;
+    private readonly IDedupStore _dedupStore;
     private readonly FanoutMetrics _metrics;
     private readonly FanoutOptions _options;
     private readonly ILogger<FanoutProcessor> _logger;
 
     public FanoutProcessor(
-        GraphClient graphClient,
-        FeedWriter feedWriter,
-        DedupStore dedupStore,
+        IGraphClient graphClient,
+        IFeedWriter feedWriter,
+        IDedupStore dedupStore,
         FanoutMetrics metrics,
         FanoutOptions options,
         ILogger<FanoutProcessor> logger)
@@ -58,6 +58,22 @@ public sealed class FanoutProcessor
 
         try
         {
+            using var classificationTimer = _metrics.TrackCelebrityClassification();
+            var stats = await _graphClient.GetUserStatsAsync(payload.AuthorId, cancellationToken);
+            var isCelebrity = stats.FollowersCount >= _options.CelebrityFollowerThreshold;
+
+            if (isCelebrity)
+            {
+                _metrics.EventsProcessed.Add(1);
+                _metrics.FanoutSkippedCelebrity.Add(1);
+                _logger.LogInformation(
+                    "Skipping fanout for celebrity author {AuthorId} followers {FollowersCount} post {PostId}",
+                    payload.AuthorId,
+                    stats.FollowersCount,
+                    payload.PostId);
+                return ProcessingOutcome.Processed;
+            }
+
             await foreach (var page in _graphClient.GetFollowersAsync(
                                payload.AuthorId,
                                _options.FollowerPageSize,

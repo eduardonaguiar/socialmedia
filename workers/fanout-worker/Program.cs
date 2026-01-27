@@ -32,14 +32,14 @@ var redisConnection = ConnectionMultiplexer.Connect(redisOptions);
 
 builder.Services.AddSingleton<IConnectionMultiplexer>(redisConnection);
 
-builder.Services.AddHttpClient<GraphClient>(client =>
+builder.Services.AddHttpClient<IGraphClient, GraphClient>(client =>
 {
     client.BaseAddress = new Uri(graphSettings.BaseUrl);
 });
 
 builder.Services.AddSingleton<FanoutMetrics>();
-builder.Services.AddSingleton<FeedWriter>();
-builder.Services.AddSingleton<DedupStore>(sp =>
+builder.Services.AddSingleton<IFeedWriter, FeedWriter>();
+builder.Services.AddSingleton<IDedupStore>(sp =>
 {
     var connection = sp.GetRequiredService<IConnectionMultiplexer>();
     var logger = sp.GetRequiredService<ILogger<DedupStore>>();

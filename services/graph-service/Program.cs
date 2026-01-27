@@ -22,6 +22,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 var postgresSettings = PostgresSettings.FromConfiguration(builder.Configuration);
+var celebritySettings = CelebritySettings.FromConfiguration(builder.Configuration);
 var dataSource = NpgsqlDataSource.Create(postgresSettings.ConnectionString);
 
 builder.Services.AddSingleton(dataSource);
@@ -167,6 +168,54 @@ app.MapGet("/users/{userId}/following", async (
     return Results.Ok(new PageResponse<FollowingDto>(items, nextCursor));
 });
 
+app.MapGet("/users/{userId}/following/celebrity", async (
+    HttpRequest request,
+    string userId,
+    GraphRepository repository,
+    GraphMetrics metrics,
+    CancellationToken cancellationToken) =>
+{
+    if (!TryGetLimit(request, out var limit, out var errorResponse))
+    {
+        return Results.BadRequest(errorResponse);
+    }
+
+    var cursorRaw = request.Query["cursor"].ToString();
+    DateTime? cursorTimestamp = null;
+    string? cursorId = null;
+
+    if (!string.IsNullOrWhiteSpace(cursorRaw))
+    {
+        if (!CursorCodec.TryDecode(cursorRaw, out var payload))
+        {
+            return Results.BadRequest(new ErrorResponse(
+                new ErrorDetails("invalid_cursor", "Cursor is invalid.")));
+        }
+
+        cursorTimestamp = payload.TimestampUtc;
+        cursorId = payload.Id;
+    }
+
+    using var timer = metrics.TrackList("celebrity_following");
+    var results = await repository.ListCelebrityFollowingAsync(
+        userId,
+        cursorTimestamp,
+        cursorId,
+        limit,
+        celebritySettings.CelebrityFollowerThreshold,
+        cancellationToken);
+
+    var items = results
+        .Select(item => new CelebrityFollowingDto(item.FollowedId, item.FollowedAtUtc, item.FollowersCount))
+        .ToList();
+
+    var nextCursor = results.Count == limit
+        ? CursorCodec.Encode(new CursorPayload(results[^1].FollowedAtUtc, results[^1].FollowedId))
+        : null;
+
+    return Results.Ok(new PageResponse<CelebrityFollowingDto>(items, nextCursor));
+});
+
 app.MapGet("/users/{userId}/followers", async (
     HttpRequest request,
     string userId,
@@ -207,6 +256,15 @@ app.MapGet("/users/{userId}/followers", async (
         : null;
 
     return Results.Ok(new PageResponse<FollowerDto>(items, nextCursor));
+});
+
+app.MapGet("/users/{userId}/stats", async (
+    string userId,
+    GraphRepository repository,
+    CancellationToken cancellationToken) =>
+{
+    var stats = await repository.GetUserStatsAsync(userId, cancellationToken);
+    return Results.Ok(new UserStatsDto(stats.UserId, stats.FollowersCount));
 });
 
 app.MapGet("/edges/{followerId}/{targetUserId}", async (
@@ -307,5 +365,17 @@ internal sealed record PostgresSettings(string ConnectionString)
         };
 
         return new PostgresSettings(builder.ConnectionString);
+    }
+}
+
+internal sealed record CelebritySettings(long CelebrityFollowerThreshold)
+{
+    public static CelebritySettings FromConfiguration(IConfiguration configuration)
+    {
+        var threshold = long.TryParse(configuration["CELEBRITY_FOLLOWER_THRESHOLD"], out var parsed)
+            ? parsed
+            : 100_000;
+
+        return new CelebritySettings(threshold);
     }
 }

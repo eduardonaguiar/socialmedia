@@ -9,3 +9,7 @@ public sealed record FollowerDto(
 public sealed record PageResponse<T>(
     [property: JsonPropertyName("items")] IReadOnlyList<T> Items,
     [property: JsonPropertyName("next_cursor")] string? NextCursor);
+
+public sealed record UserStatsDto(
+    [property: JsonPropertyName("user_id")] string UserId,
+    [property: JsonPropertyName("followers_count")] long FollowersCount);

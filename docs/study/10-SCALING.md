@@ -6,9 +6,15 @@
 
 ## Estratégia inicial
 - Threshold de celebridade evita fan-out total.
-- Posts de celebridades são mesclados no read.
+- Posts de celebridades são mesclados no read com janela limitada.
+- Fanout Worker registra métricas de skip para visibilidade do ganho.
+
+## Trade-offs operacionais
+- **Write amplification menor** para posts de celebridades.
+- **Read cost maior** para seguidores de celebridades (pull + merge).
+- Cache curto mitiga picos, mas não elimina custo.
 
 ## Considerações futuras (stubs)
 - [TODO] Sharding de Redis por faixa de usuário.
 - [TODO] Particionamento de tópicos por `author_id`.
-- [TODO] Limites de paginação para reduzir custo de merge.
+- [TODO] Ajuste adaptativo de janelas por autor (post rate).
