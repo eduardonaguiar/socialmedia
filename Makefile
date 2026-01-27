@@ -27,6 +27,7 @@ COMPOSE_FILE ?= docker-compose.yml
 POST_SERVICE_URL  ?= http://localhost:8081
 GRAPH_SERVICE_URL ?= http://localhost:8082
 FEED_SERVICE_URL  ?= http://localhost:8083
+FANOUT_WORKER_URL ?= http://localhost:8084
 GRAFANA_URL       ?= http://localhost:3000
 PROM_URL          ?= http://localhost:9090
 LOKI_URL          ?= http://localhost:3100
@@ -68,7 +69,8 @@ health: ## Check service health endpoints (best-effort)
 	@set -e; \
 	echo "== Post Service ==";  curl -fsS $(POST_SERVICE_URL)/health  && echo && echo OK || echo "NOT OK"; \
 	echo "== Graph Service =="; curl -fsS $(GRAPH_SERVICE_URL)/health && echo && echo OK || echo "NOT OK"; \
-	echo "== Feed Service ==";  curl -fsS $(FEED_SERVICE_URL)/health  && echo && echo OK || echo "NOT OK"
+	echo "== Feed Service ==";  curl -fsS $(FEED_SERVICE_URL)/health  && echo && echo OK || echo "NOT OK"; \
+	echo "== Fanout Worker =="; curl -fsS $(FANOUT_WORKER_URL)/health && echo && echo OK || echo "NOT OK"
 
 deps-health: ## Check dependency readiness in containers
 	@set -e; \
@@ -91,6 +93,7 @@ urls: ## Print useful local URLs
 	@echo "Post Service:        $(POST_SERVICE_URL)"
 	@echo "Social Graph Service: $(GRAPH_SERVICE_URL)"
 	@echo "Feed Service:        $(FEED_SERVICE_URL)"
+	@echo "Fanout Worker:       $(FANOUT_WORKER_URL)"
 	@echo "Grafana:             $(GRAFANA_URL)"
 	@echo "Prometheus:          $(PROM_URL)"
 	@echo "Loki:                $(LOKI_URL)"
@@ -108,6 +111,7 @@ test: ## Run tests (placeholder - implement once services exist)
 	@dotnet test services/post-service/Tests/PostService.Tests.csproj
 	@dotnet test services/graph-service/Tests/GraphService.Tests.csproj
 	@dotnet test services/feed-service/Tests/FeedService.Tests.csproj
+	@dotnet test workers/fanout-worker/Tests/FanoutWorker.Tests.csproj
 
 clean: ## Local cleanup (non-destructive)
 	@echo "Nothing to clean yet."
