@@ -157,6 +157,41 @@ Grafana login:
 open http://localhost:3000
 ```
 
+## Chaos scenarios (manual)
+These exercises validate resilience behavior (see `docs/study/09-FAILURES.md`).
+
+### 1) Stop Redis (feed should return 503)
+```bash
+docker compose stop redis
+```
+
+### 2) Stop Post Service (feed should skip celebrity pull)
+```bash
+docker compose stop post-service
+```
+
+### 3) Stop Graph Service (fanout retries + feed push-only)
+```bash
+docker compose stop graph-service
+```
+
+### 4) Pause Redpanda (lag grows, fanout slows)
+```bash
+docker compose pause redpanda
+```
+
+### 5) Add latency to Graph Service (retry + breaker)
+```bash
+docker compose exec graph-service sh -c "apk add --no-cache iproute2 && tc qdisc add dev eth0 root netem delay 500ms"
+```
+
+### Recovery
+```bash
+docker compose start redis post-service graph-service
+docker compose unpause redpanda
+docker compose exec graph-service tc qdisc del dev eth0 root
+```
+
 Equivalent direct checks:
 ```bash
 docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"

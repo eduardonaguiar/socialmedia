@@ -1,15 +1,18 @@
 using Npgsql;
 using PostService.Models;
+using PostService.Services;
 
 namespace PostService.Data;
 
 public sealed class PostRepository
 {
     private readonly NpgsqlDataSource _dataSource;
+    private readonly DatabaseResilience _resilience;
 
-    public PostRepository(NpgsqlDataSource dataSource)
+    public PostRepository(NpgsqlDataSource dataSource, DatabaseResilience resilience)
     {
         _dataSource = dataSource;
+        _resilience = resilience;
     }
 
     public async Task<PostDto?> GetAsync(Guid postId, CancellationToken cancellationToken)
@@ -20,21 +23,27 @@ public sealed class PostRepository
             WHERE post_id = @post_id
             """;
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(sql, connection);
-        cmd.Parameters.AddWithValue("post_id", postId);
+        return await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var cmd = new NpgsqlCommand(sql, connection);
+                cmd.Parameters.AddWithValue("post_id", postId);
 
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-        {
-            return null;
-        }
+                await using var reader = await cmd.ExecuteReaderAsync(token);
+                if (!await reader.ReadAsync(token))
+                {
+                    return null;
+                }
 
-        return new PostDto(
-            reader.GetGuid(0),
-            reader.GetString(1),
-            reader.GetString(2),
-            reader.GetDateTime(3));
+                return new PostDto(
+                    reader.GetGuid(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetDateTime(3));
+            },
+            "post.get",
+            cancellationToken);
     }
 
     public async Task<PostDto> CreateAsync(
@@ -67,23 +76,29 @@ public sealed class PostRepository
             );
             """;
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var tx = await connection.BeginTransactionAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(sql, connection, tx);
-        cmd.Parameters.AddWithValue("post_id", postId);
-        cmd.Parameters.AddWithValue("author_id", authorId);
-        cmd.Parameters.AddWithValue("content", content);
-        cmd.Parameters.AddWithValue("created_at_utc", createdAtUtc);
-        cmd.Parameters.AddWithValue("outbox_id", outboxId);
-        cmd.Parameters.AddWithValue("event_type", "PostCreated");
-        cmd.Parameters.AddWithValue("schema_version", 1);
-        cmd.Parameters.AddWithValue("payload_json", payloadJson);
-        cmd.Parameters.AddWithValue("occurred_at_utc", createdAtUtc);
+        return await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var tx = await connection.BeginTransactionAsync(token);
+                await using var cmd = new NpgsqlCommand(sql, connection, tx);
+                cmd.Parameters.AddWithValue("post_id", postId);
+                cmd.Parameters.AddWithValue("author_id", authorId);
+                cmd.Parameters.AddWithValue("content", content);
+                cmd.Parameters.AddWithValue("created_at_utc", createdAtUtc);
+                cmd.Parameters.AddWithValue("outbox_id", outboxId);
+                cmd.Parameters.AddWithValue("event_type", "PostCreated");
+                cmd.Parameters.AddWithValue("schema_version", 1);
+                cmd.Parameters.AddWithValue("payload_json", payloadJson);
+                cmd.Parameters.AddWithValue("occurred_at_utc", createdAtUtc);
 
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
-        await tx.CommitAsync(cancellationToken);
+                await cmd.ExecuteNonQueryAsync(token);
+                await tx.CommitAsync(token);
 
-        return new PostDto(postId, authorId, content, createdAtUtc);
+                return new PostDto(postId, authorId, content, createdAtUtc);
+            },
+            "post.create",
+            cancellationToken);
     }
 
     public async Task<IReadOnlyList<PostReference>> ListByAuthorAsync(
@@ -102,23 +117,29 @@ public sealed class PostRepository
             LIMIT @limit;
             """;
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(sql, connection);
-        cmd.Parameters.AddWithValue("author_id", authorId);
-        cmd.Parameters.AddWithValue("cursor_ts", (object?)cursorTimestampUtc ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("cursor_id", (object?)cursorPostId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("limit", limit);
+        return await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var cmd = new NpgsqlCommand(sql, connection);
+                cmd.Parameters.AddWithValue("author_id", authorId);
+                cmd.Parameters.AddWithValue("cursor_ts", (object?)cursorTimestampUtc ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("cursor_id", (object?)cursorPostId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("limit", limit);
 
-        var results = new List<PostReference>();
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            results.Add(new PostReference(
-                reader.GetGuid(0),
-                reader.GetDateTime(1)));
-        }
+                var results = new List<PostReference>();
+                await using var reader = await cmd.ExecuteReaderAsync(token);
+                while (await reader.ReadAsync(token))
+                {
+                    results.Add(new PostReference(
+                        reader.GetGuid(0),
+                        reader.GetDateTime(1)));
+                }
 
-        return results;
+                return results;
+            },
+            "post.list_by_author",
+            cancellationToken);
     }
 }
 

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Threading;
 
 namespace FanoutWorker.Metrics;
 
@@ -15,6 +16,10 @@ public sealed class FanoutMetrics
     public Histogram<double> ProcessingDurationMs { get; }
     public Counter<long> FanoutSkippedCelebrity { get; }
     public Histogram<double> CelebrityClassificationDurationMs { get; }
+    public Counter<long> BackpressureApplied { get; }
+    public Counter<long> Retries { get; }
+    public Counter<long> RetryExhausted { get; }
+    private long _kafkaLag;
 
     public FanoutMetrics()
     {
@@ -28,6 +33,10 @@ public sealed class FanoutMetrics
         FanoutSkippedCelebrity = _meter.CreateCounter<long>("fanout_skipped_celebrity_total");
         CelebrityClassificationDurationMs =
             _meter.CreateHistogram<double>("fanout_celebrity_classification_duration_ms", unit: "ms");
+        BackpressureApplied = _meter.CreateCounter<long>("fanout_backpressure_applied_total");
+        Retries = _meter.CreateCounter<long>("retries_total");
+        RetryExhausted = _meter.CreateCounter<long>("retry_exhausted_total");
+        _meter.CreateObservableGauge("fanout_kafka_lag", ObserveKafkaLag);
     }
 
     public IDisposable TrackProcessing() => new StopwatchScope(ProcessingDurationMs);
@@ -37,6 +46,35 @@ public sealed class FanoutMetrics
     public void RecordFailure(string cause)
     {
         Failures.Add(1, new KeyValuePair<string, object?>("cause", cause));
+    }
+
+    public void RecordBackpressure(string reason)
+    {
+        BackpressureApplied.Add(1, new KeyValuePair<string, object?>("reason", reason));
+    }
+
+    public void RecordRetry(string service, string operation)
+    {
+        Retries.Add(1,
+            new KeyValuePair<string, object?>("service", service),
+            new KeyValuePair<string, object?>("operation", operation));
+    }
+
+    public void RecordRetryExhausted(string service, string operation)
+    {
+        RetryExhausted.Add(1,
+            new KeyValuePair<string, object?>("service", service),
+            new KeyValuePair<string, object?>("operation", operation));
+    }
+
+    public void UpdateKafkaLag(long lag)
+    {
+        Interlocked.Exchange(ref _kafkaLag, lag);
+    }
+
+    private Measurement<long> ObserveKafkaLag()
+    {
+        return new Measurement<long>(Interlocked.Read(ref _kafkaLag));
     }
 
     private sealed class StopwatchScope : IDisposable

@@ -1,5 +1,8 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Linq;
+using FeedService.Services;
 
 namespace FeedService.Metrics;
 
@@ -12,6 +15,11 @@ public sealed class FeedMetrics
     private readonly Counter<long> _mergeItems;
     private readonly Counter<long> _pullCalls;
     private readonly Counter<long> _partialCelebrityFailures;
+    private readonly Counter<long> _partialResponses;
+    private readonly Counter<long> _retries;
+    private readonly Counter<long> _retryExhausted;
+    private readonly Counter<long> _circuitBreakerOpened;
+    private readonly ConcurrentDictionary<string, int> _circuitStates = new();
     private readonly Histogram<double> _mergeDurationMs;
 
     public FeedMetrics()
@@ -22,7 +30,16 @@ public sealed class FeedMetrics
         _mergeItems = _meter.CreateCounter<long>("feed_merge_items_total");
         _pullCalls = _meter.CreateCounter<long>("feed_pull_calls_total");
         _partialCelebrityFailures = _meter.CreateCounter<long>("feed_partial_celebrity_pull_failures_total");
+        _partialResponses = _meter.CreateCounter<long>("feed_partial_responses_total");
+        _retries = _meter.CreateCounter<long>("retries_total");
+        _retryExhausted = _meter.CreateCounter<long>("retry_exhausted_total");
         _mergeDurationMs = _meter.CreateHistogram<double>("feed_merge_duration_ms");
+        _circuitBreakerOpened = _meter.CreateCounter<long>("circuit_breaker_open_total");
+
+        _meter.CreateObservableGauge<long>(
+            "circuit_breaker_state",
+            () => _circuitStates.Select(pair =>
+                new Measurement<long>(pair.Value, new KeyValuePair<string, object?>("dependency", pair.Key))));
     }
 
     public IDisposable TrackFeedList() => new TimerScope(_feedDurationMs, "feed_list");
@@ -56,6 +73,35 @@ public sealed class FeedMetrics
     public void RecordCelebrityPullFailure(string cause)
     {
         _partialCelebrityFailures.Add(1, new KeyValuePair<string, object?>("cause", cause));
+    }
+
+    public void RecordPartialResponse(string reason)
+    {
+        _partialResponses.Add(1, new KeyValuePair<string, object?>("reason", reason));
+    }
+
+    public void RecordRetry(string service, string operation)
+    {
+        _retries.Add(1,
+            new KeyValuePair<string, object?>("service", service),
+            new KeyValuePair<string, object?>("operation", operation));
+    }
+
+    public void RecordRetryExhausted(string service, string operation)
+    {
+        _retryExhausted.Add(1,
+            new KeyValuePair<string, object?>("service", service),
+            new KeyValuePair<string, object?>("operation", operation));
+    }
+
+    public void RecordCircuitBreakerOpened(string dependency)
+    {
+        _circuitBreakerOpened.Add(1, new KeyValuePair<string, object?>("dependency", dependency));
+    }
+
+    public void UpdateCircuitBreakerState(string dependency, CircuitState state)
+    {
+        _circuitStates.AddOrUpdate(dependency, _ => (int)state, (_, _) => (int)state);
     }
 
     private sealed class TimerScope : IDisposable

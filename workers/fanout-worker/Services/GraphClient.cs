@@ -65,6 +65,7 @@ public sealed class GraphClient : IGraphClient
                     return payload ?? new PageResponse<FollowerDto>(Array.Empty<FollowerDto>(), null);
                 },
                 _retrySettings,
+                _metrics,
                 _logger,
                 "graph.followers",
                 cancellationToken);
@@ -99,6 +100,7 @@ public sealed class GraphClient : IGraphClient
                 return payload ?? new UserStatsDto(userId, 0);
             },
             _retrySettings,
+            _metrics,
             _logger,
             "graph.user_stats",
             cancellationToken);

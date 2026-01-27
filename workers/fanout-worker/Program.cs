@@ -35,6 +35,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(redisConnection);
 builder.Services.AddHttpClient<IGraphClient, GraphClient>(client =>
 {
     client.BaseAddress = new Uri(graphSettings.BaseUrl);
+    client.Timeout = graphSettings.Timeout;
 });
 
 builder.Services.AddSingleton<FanoutMetrics>();
@@ -42,8 +43,9 @@ builder.Services.AddSingleton<IFeedWriter, FeedWriter>();
 builder.Services.AddSingleton<IDedupStore>(sp =>
 {
     var connection = sp.GetRequiredService<IConnectionMultiplexer>();
+    var metrics = sp.GetRequiredService<FanoutMetrics>();
     var logger = sp.GetRequiredService<ILogger<DedupStore>>();
-    return new DedupStore(connection, fanoutOptions.RedisRetry, logger);
+    return new DedupStore(connection, fanoutOptions.RedisRetry, metrics, logger);
 });
 builder.Services.AddSingleton<FanoutProcessor>();
 
