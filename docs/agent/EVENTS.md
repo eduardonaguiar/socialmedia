@@ -21,8 +21,9 @@ See also: `docs/study/05-DATA_MODEL.md` and `docs/study/08-CONSISTENCY.md`.
 
 ### Processing guarantees
 - Fanout Worker:
-  - Deduplicate by `event_id` (TTL store) and/or `post_id`+`author_id`
-  - ZSET insertion must be idempotent
+  - Deduplicate by `event_id` using Redis `SET NX` with TTL (7d default)
+  - ZSET insertion is idempotent (member = `post_id`)
+  - Offset is committed only after successful fan-out + dedup record
 
 ## Event: FollowChanged v1 (optional)
 Topic: `graph.follow.changed.v1`
