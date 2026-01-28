@@ -59,6 +59,18 @@ Diretrizes adotadas:
 
 Isso mantém o tracing consistente com o stack local e evita dependências inexistentes.
 
+### Instrumentação de cache (Redis)
+Também não há auto-instrumentation GA para `StackExchange.Redis` no .NET. Para manter estabilidade e
+controle de semântica, as operações críticas de Redis são instrumentadas **manualmente** com
+`ActivitySource` nos pontos de leitura/escrita do feed e deduplicação.
+
+Diretrizes adotadas:
+- Spans com `ActivityKind.Client` e tags mínimas (`db.system = redis`, `db.operation`).
+- Sem tags de alta cardinalidade (chaves completas, payloads ou IDs por evento).
+- Operações de leitura/escrita do feed e dedup são as únicas instrumentadas (evita ruído).
+
+Essa abordagem mantém observabilidade consistente sem depender de pacotes beta.
+
 Convenções do stack local:
 - Rede única `case1-net` para comunicação previsível.
 - Volumes nomeados `pg_data`, `redpanda_data` e `redis_data`.

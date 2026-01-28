@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FanoutWorker.Metrics;
 using FanoutWorker.Models;
 using FanoutWorker.Options;
@@ -37,10 +38,6 @@ public sealed class FeedWriter : IFeedWriter
         var key = FeedCachePolicy.GetFeedKey(followerId);
         var db = _connection.GetDatabase();
 
-        using var activity = FanoutTelemetry.ActivitySource.StartActivity("redis.feed.write");
-        activity?.SetTag("feed.key", key);
-        activity?.SetTag("post.id", postId.ToString());
-
         var throttled = await _rateLimiter.WaitAsync(cancellationToken);
         if (throttled)
         {
@@ -53,7 +50,7 @@ public sealed class FeedWriter : IFeedWriter
             await RetryHelper.ExecuteAsync(
                 async token =>
                 {
-                    await db.SortedSetAddAsync(key, postId.ToString(), createdAtMs);
+                    await ExecuteRedisAsync("ZADD", () => db.SortedSetAddAsync(key, postId.ToString(), createdAtMs));
                     _metrics.RedisWrites.Add(1);
                     await TrimHotWindowAsync(db, key, token);
                     return true;
@@ -74,13 +71,21 @@ public sealed class FeedWriter : IFeedWriter
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var length = await db.SortedSetLengthAsync(key);
+        var length = await ExecuteRedisAsync("ZCARD", () => db.SortedSetLengthAsync(key));
         if (!FeedCachePolicy.TryGetTrimRange(length, _hotWindowMaxItems, out var range))
         {
             return;
         }
 
         _logger.LogDebug("Trimming feed key {Key} to hot window size {MaxItems}", key, _hotWindowMaxItems);
-        await db.SortedSetRemoveRangeByRankAsync(key, range.Start, range.Stop);
+        await ExecuteRedisAsync("ZREMRANGEBYRANK", () => db.SortedSetRemoveRangeByRankAsync(key, range.Start, range.Stop));
+    }
+
+    private async Task<T> ExecuteRedisAsync<T>(string operation, Func<Task<T>> action)
+    {
+        using var activity = FanoutTelemetry.ActivitySource.StartActivity($"redis.{operation}", ActivityKind.Client);
+        activity?.SetTag("db.system", "redis");
+        activity?.SetTag("db.operation", operation);
+        return await action();
     }
 }
