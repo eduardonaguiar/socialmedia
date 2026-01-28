@@ -87,7 +87,7 @@ builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
-        .AddNpgsql()
+        .AddSource(PostTelemetry.ActivitySourceName)
         .AddSource("PostService.OutboxPublisher")
         .AddOtlpExporter())
     .WithMetrics(metrics => metrics

@@ -48,6 +48,17 @@ Contrato básico:
 - Logs OTLP são roteados para o Loki.
 - Traces OTLP são roteados para o Tempo.
 
+### Instrumentação de banco (PostgreSQL)
+Não existe pacote estável `OpenTelemetry.Instrumentation.Npgsql` no ecossistema .NET. A abordagem correta
+é **instrumentar manualmente** com `ActivitySource` nos pontos relevantes de acesso ao banco.
+
+Diretrizes adotadas:
+- Spans criados ao redor de comandos SQL importantes (read/write de feed/graph e outbox).
+- Tags sem cardinalidade alta (`db.system = postgresql`, `db.operation`, `db.name`).
+- `db.statement` usado apenas com strings estáticas/sanitizadas para evitar explosão de cardinalidade.
+
+Isso mantém o tracing consistente com o stack local e evita dependências inexistentes.
+
 Convenções do stack local:
 - Rede única `case1-net` para comunicação previsível.
 - Volumes nomeados `pg_data`, `redpanda_data` e `redis_data`.
