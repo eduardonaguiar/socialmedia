@@ -15,3 +15,4 @@
 - Circuit breaker opens and feed returns partial data when Graph/Post fail
 - Retry exhaustion visible via `retry_exhausted_total`
 - Kafka lag visible (`fanout_kafka_lag`) and decreases after recovery
+- k6 suite covers scale/read/write and resilience checks (see `docs/study/10-SCALING.md`)
