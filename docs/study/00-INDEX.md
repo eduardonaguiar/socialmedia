@@ -15,7 +15,10 @@ arquitetura, dados e consistência.
 8. [08 — Consistência e Idempotência](08-CONSISTENCY.md)
 9. [09 — Falhas e Degradação](09-FAILURES.md)
 10. [10 — Escala e Skew](10-SCALING.md)
-11. [11 — Notas de Avaliação](11-EVAL_NOTES.md)
+11. [11 — Evolução de Escala](11-SCALE_EVOLUTION.md)
+12. [12 — Modelo de Custos](12-COST_MODEL.md)
+13. [13 — Revisão de Entrevista](13-INTERVIEW_REVIEW.md)
+14. [14 — Notas de Avaliação](14-EVAL_NOTES.md)
 
 ## Referências internas (EN)
 - [Contexto do Projeto](../agent/PROJECT_CONTEXT.md)
