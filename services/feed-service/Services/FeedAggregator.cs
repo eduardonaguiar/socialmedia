@@ -15,6 +15,8 @@ public sealed class FeedAggregator
     private readonly FeedMetrics _metrics;
     private readonly FeedOptions _options;
     private readonly ILogger<FeedAggregator> _logger;
+    private readonly CircuitBreaker _graphBreaker;
+    private readonly CircuitBreaker _postBreaker;
 
     public FeedAggregator(
         FeedRepository repository,
@@ -23,6 +25,7 @@ public sealed class FeedAggregator
         IMemoryCache cache,
         FeedMetrics metrics,
         FeedOptions options,
+        FeedResilienceOptions resilienceOptions,
         ILogger<FeedAggregator> logger)
     {
         _repository = repository;
@@ -32,6 +35,8 @@ public sealed class FeedAggregator
         _metrics = metrics;
         _options = options;
         _logger = logger;
+        _graphBreaker = new CircuitBreaker(resilienceOptions.GraphCircuitBreaker, metrics, logger, "graph_service");
+        _postBreaker = new CircuitBreaker(resilienceOptions.PostCircuitBreaker, metrics, logger, "post_service");
     }
 
     public async Task<IReadOnlyList<MergedFeedItem>> GetFeedAsync(
@@ -81,10 +86,19 @@ public sealed class FeedAggregator
                 }
             }
         }
+        catch (CircuitBreakerOpenException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _metrics.RecordPartialResponse(ex.Dependency);
+            _logger.LogWarning("Circuit breaker open for {Dependency}; serving pushed feed only", ex.Dependency);
+            var merged = FeedMerger.Merge(pushedEntries, Array.Empty<PostReference>(), cursor, limit);
+            RecordMergeMetrics(merged);
+            return merged;
+        }
         catch (HttpRequestException ex) when (!cancellationToken.IsCancellationRequested)
         {
             _metrics.RecordPullCall("post_service", false);
             _metrics.RecordCelebrityPullFailure("post_service");
+            _metrics.RecordPartialResponse("post_service");
             _logger.LogWarning(ex, "Celebrity pull failed for user {UserId}", userId);
             var merged = FeedMerger.Merge(pushedEntries, Array.Empty<PostReference>(), cursor, limit);
             RecordMergeMetrics(merged);
@@ -114,12 +128,18 @@ public sealed class FeedAggregator
                 using var activity = FeedTelemetry.ActivitySource.StartActivity("graph.celebrity_following.page");
                 activity?.SetTag("feed.user_id", userId);
 
+                if (!_graphBreaker.TryAcquire())
+                {
+                    throw new CircuitBreakerOpenException("graph_service");
+                }
+
                 var response = await _graphClient.GetCelebrityFollowingAsync(
                     userId,
                     _options.CelebrityFollowingPageSize,
                     cursor,
                     cancellationToken);
                 _metrics.RecordPullCall("graph", true);
+                _graphBreaker.RecordSuccess();
 
                 authors.AddRange(response.Items.Select(item => item.FollowedId));
 
@@ -131,10 +151,18 @@ public sealed class FeedAggregator
                 cursor = response.NextCursor;
             }
         }
+        catch (CircuitBreakerOpenException)
+        {
+            _metrics.RecordPartialResponse("graph_service");
+            _logger.LogWarning("Circuit breaker open for graph_service; skipping celebrity follow list");
+            return Array.Empty<string>();
+        }
         catch (HttpRequestException) when (!cancellationToken.IsCancellationRequested)
         {
             _metrics.RecordPullCall("graph", false);
             _metrics.RecordCelebrityPullFailure("graph_service");
+            _metrics.RecordPartialResponse("graph_service");
+            _graphBreaker.RecordFailure();
             return Array.Empty<string>();
         }
 
@@ -149,19 +177,33 @@ public sealed class FeedAggregator
             return cached;
         }
 
-        var response = await _postClient.GetAuthorPostsAsync(
-            authorId,
-            _options.CelebrityPostsPerAuthor,
-            cursor: null,
-            cancellationToken);
-        _metrics.RecordPullCall("post_service", true);
+        if (!_postBreaker.TryAcquire())
+        {
+            throw new CircuitBreakerOpenException("post_service");
+        }
 
-        var results = response.Items
-            .Select(item => new PostReference(item.PostId, item.CreatedAtMs))
-            .ToList();
+        try
+        {
+            var response = await _postClient.GetAuthorPostsAsync(
+                authorId,
+                _options.CelebrityPostsPerAuthor,
+                cursor: null,
+                cancellationToken);
+            _metrics.RecordPullCall("post_service", true);
+            _postBreaker.RecordSuccess();
 
-        CacheWithJitter(GetAuthorCacheKey(authorId), results, _options.AuthorTimelineCacheTtl, _options.AuthorTimelineCacheJitter);
-        return results;
+            var results = response.Items
+                .Select(item => new PostReference(item.PostId, item.CreatedAtMs))
+                .ToList();
+
+            CacheWithJitter(GetAuthorCacheKey(authorId), results, _options.AuthorTimelineCacheTtl, _options.AuthorTimelineCacheJitter);
+            return results;
+        }
+        catch (HttpRequestException)
+        {
+            _postBreaker.RecordFailure();
+            throw;
+        }
     }
 
     private void CacheWithJitter<T>(string key, T value, TimeSpan ttl, TimeSpan jitter)

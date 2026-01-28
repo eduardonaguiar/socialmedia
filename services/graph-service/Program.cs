@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using GraphService.Data;
 using GraphService.Metrics;
 using GraphService.Models;
+using GraphService.Services;
 using Npgsql;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -23,12 +24,15 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var postgresSettings = PostgresSettings.FromConfiguration(builder.Configuration);
 var celebritySettings = CelebritySettings.FromConfiguration(builder.Configuration);
+var resilienceOptions = DatabaseResilienceOptions.FromConfiguration(builder.Configuration);
 var dataSource = NpgsqlDataSource.Create(postgresSettings.ConnectionString);
 
 builder.Services.AddSingleton(dataSource);
+builder.Services.AddSingleton(resilienceOptions);
 builder.Services.AddSingleton<GraphRepository>();
 builder.Services.AddSingleton<MigrationRunner>();
 builder.Services.AddSingleton<GraphMetrics>();
+builder.Services.AddSingleton<DatabaseResilience>();
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resourceBuilder =>
@@ -60,6 +64,19 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (DependencyUnavailableException ex)
+    {
+        app.Logger.LogWarning(ex, "Dependency unavailable: {Dependency}", ex.Dependency);
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+    }
+});
 
 app.MapPost("/follow/{targetUserId}", async (
     HttpRequest request,
@@ -354,6 +371,9 @@ internal sealed record PostgresSettings(string ConnectionString)
         var database = configuration["POSTGRES_DB"] ?? "case1_feed";
         var username = configuration["POSTGRES_USER"] ?? "case1_feed";
         var password = configuration["POSTGRES_PASSWORD"] ?? "case1_feed";
+        var commandTimeout = int.TryParse(configuration["DB_COMMAND_TIMEOUT_SECONDS"], out var parsedTimeout)
+            ? parsedTimeout
+            : 2;
 
         var builder = new NpgsqlConnectionStringBuilder
         {
@@ -361,7 +381,8 @@ internal sealed record PostgresSettings(string ConnectionString)
             Port = port,
             Database = database,
             Username = username,
-            Password = password
+            Password = password,
+            CommandTimeout = Math.Max(1, commandTimeout)
         };
 
         return new PostgresSettings(builder.ConnectionString);

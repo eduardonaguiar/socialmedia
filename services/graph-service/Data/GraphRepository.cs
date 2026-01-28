@@ -1,4 +1,5 @@
 using System.Data;
+using GraphService.Services;
 using Npgsql;
 
 namespace GraphService.Data;
@@ -18,10 +19,12 @@ public sealed record UserStatsRecord(string UserId, long FollowersCount);
 public sealed class GraphRepository
 {
     private readonly NpgsqlDataSource _dataSource;
+    private readonly DatabaseResilience _resilience;
 
-    public GraphRepository(NpgsqlDataSource dataSource)
+    public GraphRepository(NpgsqlDataSource dataSource, DatabaseResilience resilience)
     {
         _dataSource = dataSource;
+        _resilience = resilience;
     }
 
     public async Task<FollowResult> FollowAsync(
@@ -29,28 +32,34 @@ public sealed class GraphRepository
         string followedId,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var tx = await connection.BeginTransactionAsync(cancellationToken);
+        return await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var tx = await connection.BeginTransactionAsync(token);
 
-        var now = DateTime.UtcNow;
-        var (followedAtUtc, created) = await InsertEdgeAsync(
-            connection,
-            tx,
-            followerId,
-            followedId,
-            now,
+                var now = DateTime.UtcNow;
+                var (followedAtUtc, created) = await InsertEdgeAsync(
+                    connection,
+                    tx,
+                    followerId,
+                    followedId,
+                    now,
+                    token);
+
+                await UpsertFollowingAsync(connection, tx, followerId, followedId, followedAtUtc, token);
+                await UpsertFollowersAsync(connection, tx, followedId, followerId, followedAtUtc, token);
+                if (created)
+                {
+                    await IncrementFollowersCountAsync(connection, tx, followedId, token);
+                }
+
+                await tx.CommitAsync(token);
+
+                return new FollowResult(new FollowEdge(followerId, followedId, followedAtUtc), created);
+            },
+            "graph.follow",
             cancellationToken);
-
-        await UpsertFollowingAsync(connection, tx, followerId, followedId, followedAtUtc, cancellationToken);
-        await UpsertFollowersAsync(connection, tx, followedId, followerId, followedAtUtc, cancellationToken);
-        if (created)
-        {
-            await IncrementFollowersCountAsync(connection, tx, followedId, cancellationToken);
-        }
-
-        await tx.CommitAsync(cancellationToken);
-
-        return new FollowResult(new FollowEdge(followerId, followedId, followedAtUtc), created);
     }
 
     public async Task<bool> UnfollowAsync(
@@ -58,20 +67,26 @@ public sealed class GraphRepository
         string followedId,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var tx = await connection.BeginTransactionAsync(cancellationToken);
+        return await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var tx = await connection.BeginTransactionAsync(token);
 
-        var deleted = await DeleteEdgeAsync(connection, tx, followerId, followedId, cancellationToken);
-        await DeleteFollowingAsync(connection, tx, followerId, followedId, cancellationToken);
-        await DeleteFollowersAsync(connection, tx, followedId, followerId, cancellationToken);
-        if (deleted)
-        {
-            await DecrementFollowersCountAsync(connection, tx, followedId, cancellationToken);
-        }
+                var deleted = await DeleteEdgeAsync(connection, tx, followerId, followedId, token);
+                await DeleteFollowingAsync(connection, tx, followerId, followedId, token);
+                await DeleteFollowersAsync(connection, tx, followedId, followerId, token);
+                if (deleted)
+                {
+                    await DecrementFollowersCountAsync(connection, tx, followedId, token);
+                }
 
-        await tx.CommitAsync(cancellationToken);
+                await tx.CommitAsync(token);
 
-        return deleted;
+                return deleted;
+            },
+            "graph.unfollow",
+            cancellationToken);
     }
 
     public async Task<bool> EdgeExistsAsync(
@@ -79,15 +94,21 @@ public sealed class GraphRepository
         string followedId,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(
-            "SELECT 1 FROM follow_edges WHERE follower_id = @follower_id AND followed_id = @followed_id",
-            connection);
-        cmd.Parameters.AddWithValue("follower_id", followerId);
-        cmd.Parameters.AddWithValue("followed_id", followedId);
+        return await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var cmd = new NpgsqlCommand(
+                    "SELECT 1 FROM follow_edges WHERE follower_id = @follower_id AND followed_id = @followed_id",
+                    connection);
+                cmd.Parameters.AddWithValue("follower_id", followerId);
+                cmd.Parameters.AddWithValue("followed_id", followedId);
 
-        var result = await cmd.ExecuteScalarAsync(cancellationToken);
-        return result is not null;
+                var result = await cmd.ExecuteScalarAsync(token);
+                return result is not null;
+            },
+            "graph.edge_exists",
+            cancellationToken);
     }
 
     public async Task<IReadOnlyList<FollowingRecord>> ListFollowingAsync(
@@ -97,33 +118,39 @@ public sealed class GraphRepository
         int limit,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(
-            """
-            SELECT followed_id, followed_at_utc
-            FROM following_by_user
-            WHERE user_id = @user_id
-              AND (@cursor_ts IS NULL OR (followed_at_utc, followed_id) < (@cursor_ts, @cursor_id))
-            ORDER BY followed_at_utc DESC, followed_id DESC
-            LIMIT @limit;
-            """,
-            connection);
+        return await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var cmd = new NpgsqlCommand(
+                    """
+                    SELECT followed_id, followed_at_utc
+                    FROM following_by_user
+                    WHERE user_id = @user_id
+                      AND (@cursor_ts IS NULL OR (followed_at_utc, followed_id) < (@cursor_ts, @cursor_id))
+                    ORDER BY followed_at_utc DESC, followed_id DESC
+                    LIMIT @limit;
+                    """,
+                    connection);
 
-        cmd.Parameters.AddWithValue("user_id", userId);
-        cmd.Parameters.AddWithValue("cursor_ts", (object?)cursorTimestampUtc ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("cursor_id", (object?)cursorId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("limit", limit);
+                cmd.Parameters.AddWithValue("user_id", userId);
+                cmd.Parameters.AddWithValue("cursor_ts", (object?)cursorTimestampUtc ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("cursor_id", (object?)cursorId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("limit", limit);
 
-        var results = new List<FollowingRecord>();
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            results.Add(new FollowingRecord(
-                reader.GetString(0),
-                reader.GetDateTime(1)));
-        }
+                var results = new List<FollowingRecord>();
+                await using var reader = await cmd.ExecuteReaderAsync(token);
+                while (await reader.ReadAsync(token))
+                {
+                    results.Add(new FollowingRecord(
+                        reader.GetString(0),
+                        reader.GetDateTime(1)));
+                }
 
-        return results;
+                return results;
+            },
+            "graph.list_following",
+            cancellationToken);
     }
 
     public async Task<IReadOnlyList<FollowerRecord>> ListFollowersAsync(
@@ -133,33 +160,39 @@ public sealed class GraphRepository
         int limit,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(
-            """
-            SELECT follower_id, followed_at_utc
-            FROM followers_by_user
-            WHERE user_id = @user_id
-              AND (@cursor_ts IS NULL OR (followed_at_utc, follower_id) < (@cursor_ts, @cursor_id))
-            ORDER BY followed_at_utc DESC, follower_id DESC
-            LIMIT @limit;
-            """,
-            connection);
+        return await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var cmd = new NpgsqlCommand(
+                    """
+                    SELECT follower_id, followed_at_utc
+                    FROM followers_by_user
+                    WHERE user_id = @user_id
+                      AND (@cursor_ts IS NULL OR (followed_at_utc, follower_id) < (@cursor_ts, @cursor_id))
+                    ORDER BY followed_at_utc DESC, follower_id DESC
+                    LIMIT @limit;
+                    """,
+                    connection);
 
-        cmd.Parameters.AddWithValue("user_id", userId);
-        cmd.Parameters.AddWithValue("cursor_ts", (object?)cursorTimestampUtc ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("cursor_id", (object?)cursorId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("limit", limit);
+                cmd.Parameters.AddWithValue("user_id", userId);
+                cmd.Parameters.AddWithValue("cursor_ts", (object?)cursorTimestampUtc ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("cursor_id", (object?)cursorId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("limit", limit);
 
-        var results = new List<FollowerRecord>();
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            results.Add(new FollowerRecord(
-                reader.GetString(0),
-                reader.GetDateTime(1)));
-        }
+                var results = new List<FollowerRecord>();
+                await using var reader = await cmd.ExecuteReaderAsync(token);
+                while (await reader.ReadAsync(token))
+                {
+                    results.Add(new FollowerRecord(
+                        reader.GetString(0),
+                        reader.GetDateTime(1)));
+                }
 
-        return results;
+                return results;
+            },
+            "graph.list_followers",
+            cancellationToken);
     }
 
     public async Task<IReadOnlyList<CelebrityFollowingRecord>> ListCelebrityFollowingAsync(
@@ -170,59 +203,71 @@ public sealed class GraphRepository
         long celebrityThreshold,
         CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(
-            """
-            SELECT f.followed_id, f.followed_at_utc, COALESCE(s.followers_count, 0) AS followers_count
-            FROM following_by_user f
-            LEFT JOIN user_stats s ON f.followed_id = s.user_id
-            WHERE f.user_id = @user_id
-              AND COALESCE(s.followers_count, 0) >= @threshold
-              AND (@cursor_ts IS NULL OR (f.followed_at_utc, f.followed_id) < (@cursor_ts, @cursor_id))
-            ORDER BY f.followed_at_utc DESC, f.followed_id DESC
-            LIMIT @limit;
-            """,
-            connection);
+        return await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var cmd = new NpgsqlCommand(
+                    """
+                    SELECT f.followed_id, f.followed_at_utc, COALESCE(s.followers_count, 0) AS followers_count
+                    FROM following_by_user f
+                    LEFT JOIN user_stats s ON f.followed_id = s.user_id
+                    WHERE f.user_id = @user_id
+                      AND COALESCE(s.followers_count, 0) >= @threshold
+                      AND (@cursor_ts IS NULL OR (f.followed_at_utc, f.followed_id) < (@cursor_ts, @cursor_id))
+                    ORDER BY f.followed_at_utc DESC, f.followed_id DESC
+                    LIMIT @limit;
+                    """,
+                    connection);
 
-        cmd.Parameters.AddWithValue("user_id", userId);
-        cmd.Parameters.AddWithValue("threshold", celebrityThreshold);
-        cmd.Parameters.AddWithValue("cursor_ts", (object?)cursorTimestampUtc ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("cursor_id", (object?)cursorId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("limit", limit);
+                cmd.Parameters.AddWithValue("user_id", userId);
+                cmd.Parameters.AddWithValue("threshold", celebrityThreshold);
+                cmd.Parameters.AddWithValue("cursor_ts", (object?)cursorTimestampUtc ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("cursor_id", (object?)cursorId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("limit", limit);
 
-        var results = new List<CelebrityFollowingRecord>();
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            results.Add(new CelebrityFollowingRecord(
-                reader.GetString(0),
-                reader.GetDateTime(1),
-                reader.GetInt64(2)));
-        }
+                var results = new List<CelebrityFollowingRecord>();
+                await using var reader = await cmd.ExecuteReaderAsync(token);
+                while (await reader.ReadAsync(token))
+                {
+                    results.Add(new CelebrityFollowingRecord(
+                        reader.GetString(0),
+                        reader.GetDateTime(1),
+                        reader.GetInt64(2)));
+                }
 
-        return results;
+                return results;
+            },
+            "graph.list_celebrity_following",
+            cancellationToken);
     }
 
     public async Task<UserStatsRecord> GetUserStatsAsync(string userId, CancellationToken cancellationToken)
     {
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(
-            """
-            SELECT user_id, followers_count
-            FROM user_stats
-            WHERE user_id = @user_id;
-            """,
-            connection);
+        return await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var cmd = new NpgsqlCommand(
+                    """
+                    SELECT user_id, followers_count
+                    FROM user_stats
+                    WHERE user_id = @user_id;
+                    """,
+                    connection);
 
-        cmd.Parameters.AddWithValue("user_id", userId);
+                cmd.Parameters.AddWithValue("user_id", userId);
 
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        if (await reader.ReadAsync(cancellationToken))
-        {
-            return new UserStatsRecord(reader.GetString(0), reader.GetInt64(1));
-        }
+                await using var reader = await cmd.ExecuteReaderAsync(token);
+                if (await reader.ReadAsync(token))
+                {
+                    return new UserStatsRecord(reader.GetString(0), reader.GetInt64(1));
+                }
 
-        return new UserStatsRecord(userId, 0);
+                return new UserStatsRecord(userId, 0);
+            },
+            "graph.user_stats",
+            cancellationToken);
     }
 
     private static async Task<(DateTime FollowedAtUtc, bool Created)> InsertEdgeAsync(

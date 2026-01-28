@@ -9,6 +9,7 @@ using PostService.Data;
 using PostService.Messaging;
 using PostService.Metrics;
 using PostService.Models;
+using PostService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,6 +25,8 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 var postgresSettings = PostgresSettings.FromConfiguration(builder.Configuration);
+var dbResilienceOptions = DatabaseResilienceOptions.FromConfiguration(builder.Configuration);
+var kafkaResilienceOptions = KafkaResilienceOptions.FromConfiguration(builder.Configuration);
 var dataSource = NpgsqlDataSource.Create(postgresSettings.ConnectionString);
 
 builder.Services.AddSingleton(dataSource);
@@ -31,13 +34,18 @@ builder.Services.AddSingleton<PostRepository>();
 builder.Services.AddSingleton<OutboxRepository>();
 builder.Services.AddSingleton<MigrationRunner>();
 builder.Services.AddSingleton<OutboxMetrics>();
+builder.Services.AddSingleton(dbResilienceOptions);
+builder.Services.AddSingleton(kafkaResilienceOptions);
+builder.Services.AddSingleton<DatabaseResilience>();
+builder.Services.AddSingleton<KafkaResilience>();
 
 var kafkaSettings = KafkaSettings.FromConfiguration(builder.Configuration);
 var producerConfig = new ProducerConfig
 {
     BootstrapServers = kafkaSettings.Brokers,
     ClientId = kafkaSettings.ClientId,
-    SecurityProtocol = kafkaSettings.SecurityProtocol
+    SecurityProtocol = kafkaSettings.SecurityProtocol,
+    MessageTimeoutMs = kafkaSettings.ProduceTimeoutMs
 };
 
 builder.Services.AddSingleton<IProducer<string, string>>(_ =>
@@ -50,11 +58,14 @@ builder.Services.AddHostedService(provider =>
     var logger = provider.GetRequiredService<ILogger<OutboxPublisherService>>();
     var producer = provider.GetRequiredService<IProducer<string, string>>();
 
+    var kafkaResilience = provider.GetRequiredService<KafkaResilience>();
+
     return new OutboxPublisherService(
         outboxRepository,
         metrics,
         logger,
         producer,
+        kafkaResilience,
         kafkaSettings.PostCreatedTopic,
         TimeSpan.FromSeconds(kafkaSettings.OutboxPollSeconds),
         TimeSpan.FromSeconds(kafkaSettings.OutboxLockSeconds),
@@ -94,6 +105,19 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (DependencyUnavailableException ex)
+    {
+        app.Logger.LogWarning(ex, "Dependency unavailable: {Dependency}", ex.Dependency);
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+    }
+});
 
 app.MapPost("/posts", async (
     HttpRequest request,
@@ -256,13 +280,18 @@ internal sealed record PostgresSettings(string ConnectionString)
         var username = configuration["POSTGRES_USER"] ?? "case1_feed";
         var password = configuration["POSTGRES_PASSWORD"] ?? "case1_feed";
 
+        var commandTimeout = int.TryParse(configuration["DB_COMMAND_TIMEOUT_SECONDS"], out var parsedTimeout)
+            ? parsedTimeout
+            : 2;
+
         var builder = new NpgsqlConnectionStringBuilder
         {
             Host = host,
             Port = port,
             Database = database,
             Username = username,
-            Password = password
+            Password = password,
+            CommandTimeout = Math.Max(1, commandTimeout)
         };
 
         return new PostgresSettings(builder.ConnectionString);
@@ -276,7 +305,8 @@ internal sealed record KafkaSettings(
     string PostCreatedTopic,
     int OutboxPollSeconds,
     int OutboxLockSeconds,
-    int OutboxBatchSize)
+    int OutboxBatchSize,
+    int ProduceTimeoutMs)
 {
     public static KafkaSettings FromConfiguration(IConfiguration configuration)
     {
@@ -295,7 +325,10 @@ internal sealed record KafkaSettings(
         var batchSize = int.TryParse(configuration["OUTBOX_BATCH_SIZE"], out var batchParsed)
             ? batchParsed
             : 20;
+        var produceTimeoutMs = int.TryParse(configuration["KAFKA_PRODUCE_TIMEOUT_MS"], out var parsedTimeout)
+            ? parsedTimeout
+            : 2000;
 
-        return new KafkaSettings(brokers, clientId, protocol, topic, pollSeconds, lockSeconds, batchSize);
+        return new KafkaSettings(brokers, clientId, protocol, topic, pollSeconds, lockSeconds, batchSize, produceTimeoutMs);
     }
 }

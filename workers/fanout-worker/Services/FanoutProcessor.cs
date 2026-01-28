@@ -19,6 +19,7 @@ public sealed class FanoutProcessor
     private readonly FanoutMetrics _metrics;
     private readonly FanoutOptions _options;
     private readonly ILogger<FanoutProcessor> _logger;
+    private readonly SimpleRateLimiter _followerLimiter;
 
     public FanoutProcessor(
         IGraphClient graphClient,
@@ -34,6 +35,7 @@ public sealed class FanoutProcessor
         _metrics = metrics;
         _options = options;
         _logger = logger;
+        _followerLimiter = new SimpleRateLimiter(options.FollowersPerSecond);
     }
 
     public async Task<ProcessingOutcome> ProcessAsync(PostCreatedEventV1 payload, CancellationToken cancellationToken)
@@ -82,6 +84,12 @@ public sealed class FanoutProcessor
             {
                 foreach (var follower in page.Items)
                 {
+                    var throttled = await _followerLimiter.WaitAsync(cancellationToken);
+                    if (throttled)
+                    {
+                        _metrics.RecordBackpressure("followers_rate_limit");
+                    }
+
                     await _feedWriter.AddToFeedAsync(
                         follower.FollowerId,
                         payload.PostId,

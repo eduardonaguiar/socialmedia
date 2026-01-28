@@ -3,6 +3,7 @@ using System.Text.Json;
 using Confluent.Kafka;
 using PostService.Data;
 using PostService.Metrics;
+using PostService.Services;
 
 namespace PostService.Messaging;
 
@@ -14,6 +15,7 @@ public sealed class OutboxPublisherService : BackgroundService
     private readonly ILogger<OutboxPublisherService> _logger;
     private readonly IProducer<string, string> _producer;
     private readonly string _topic;
+    private readonly KafkaResilience _kafkaResilience;
     private readonly Guid _lockId = Guid.NewGuid();
     private readonly TimeSpan _pollInterval;
     private readonly TimeSpan _lockTimeout;
@@ -24,6 +26,7 @@ public sealed class OutboxPublisherService : BackgroundService
         OutboxMetrics metrics,
         ILogger<OutboxPublisherService> logger,
         IProducer<string, string> producer,
+        KafkaResilience kafkaResilience,
         string topic,
         TimeSpan pollInterval,
         TimeSpan lockTimeout,
@@ -33,6 +36,7 @@ public sealed class OutboxPublisherService : BackgroundService
         _metrics = metrics;
         _logger = logger;
         _producer = producer;
+        _kafkaResilience = kafkaResilience;
         _topic = topic;
         _pollInterval = pollInterval;
         _lockTimeout = lockTimeout;
@@ -43,11 +47,22 @@ public sealed class OutboxPublisherService : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            var messages = await _outboxRepository.LockPendingAsync(
-                _lockId,
-                _batchSize,
-                _lockTimeout,
-                stoppingToken);
+            IReadOnlyList<OutboxMessage> messages;
+
+            try
+            {
+                messages = await _outboxRepository.LockPendingAsync(
+                    _lockId,
+                    _batchSize,
+                    _lockTimeout,
+                    stoppingToken);
+            }
+            catch (DependencyUnavailableException ex) when (!stoppingToken.IsCancellationRequested)
+            {
+                _logger.LogWarning(ex, "Postgres unavailable while locking outbox messages");
+                await Task.Delay(_pollInterval, stoppingToken);
+                continue;
+            }
 
             if (messages.Count == 0)
             {
@@ -78,14 +93,23 @@ public sealed class OutboxPublisherService : BackgroundService
                 Value = message.PayloadJson
             };
 
-            await _producer.ProduceAsync(_topic, kafkaMessage, cancellationToken);
+            await _kafkaResilience.ExecuteAsync(
+                async token => await _producer.ProduceAsync(_topic, kafkaMessage, token),
+                "kafka.produce",
+                cancellationToken);
             await _outboxRepository.MarkPublishedAsync(message.OutboxId, cancellationToken);
             _metrics.PublishSuccess.Add(1);
             _logger.LogInformation("Published outbox message {OutboxId} to topic {Topic}", message.OutboxId, _topic);
         }
+        catch (DependencyUnavailableException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            await TryRecordFailureAsync(message.OutboxId, ex.Message, cancellationToken);
+            _metrics.PublishFailure.Add(1);
+            _logger.LogWarning(ex, "Dependency {Dependency} unavailable while publishing outbox message {OutboxId}", ex.Dependency, message.OutboxId);
+        }
         catch (Exception ex)
         {
-            await _outboxRepository.RecordFailureAsync(message.OutboxId, ex.Message, cancellationToken);
+            await TryRecordFailureAsync(message.OutboxId, ex.Message, cancellationToken);
             _metrics.PublishFailure.Add(1);
             _logger.LogWarning(ex, "Failed to publish outbox message {OutboxId}", message.OutboxId);
         }
@@ -100,5 +124,17 @@ public sealed class OutboxPublisherService : BackgroundService
         }
 
         return string.Empty;
+    }
+
+    private async Task TryRecordFailureAsync(Guid outboxId, string message, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _outboxRepository.RecordFailureAsync(outboxId, message, cancellationToken);
+        }
+        catch (DependencyUnavailableException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Postgres unavailable while recording outbox failure for {OutboxId}", outboxId);
+        }
     }
 }

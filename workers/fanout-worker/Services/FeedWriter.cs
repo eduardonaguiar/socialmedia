@@ -2,6 +2,7 @@ using FanoutWorker.Metrics;
 using FanoutWorker.Models;
 using FanoutWorker.Options;
 using StackExchange.Redis;
+using System.Threading;
 
 namespace FanoutWorker.Services;
 
@@ -17,6 +18,8 @@ public sealed class FeedWriter : IFeedWriter
     private readonly RetrySettings _retrySettings;
     private readonly ILogger<FeedWriter> _logger;
     private readonly int _hotWindowMaxItems;
+    private readonly SemaphoreSlim _concurrencyLimiter;
+    private readonly SimpleRateLimiter _rateLimiter;
 
     public FeedWriter(IConnectionMultiplexer connection, FanoutMetrics metrics, FanoutOptions options, ILogger<FeedWriter> logger)
     {
@@ -25,6 +28,8 @@ public sealed class FeedWriter : IFeedWriter
         _retrySettings = options.RedisRetry;
         _logger = logger;
         _hotWindowMaxItems = options.HotWindowMaxItems;
+        _concurrencyLimiter = new SemaphoreSlim(options.MaxConcurrentRedisWrites, options.MaxConcurrentRedisWrites);
+        _rateLimiter = new SimpleRateLimiter(options.RedisWritesPerSecond);
     }
 
     public async Task AddToFeedAsync(string followerId, Guid postId, long createdAtMs, CancellationToken cancellationToken)
@@ -36,18 +41,33 @@ public sealed class FeedWriter : IFeedWriter
         activity?.SetTag("feed.key", key);
         activity?.SetTag("post.id", postId.ToString());
 
-        await RetryHelper.ExecuteAsync(
-            async token =>
-            {
-                await db.SortedSetAddAsync(key, postId.ToString(), createdAtMs);
-                _metrics.RedisWrites.Add(1);
-                await TrimHotWindowAsync(db, key, token);
-                return true;
-            },
-            _retrySettings,
-            _logger,
-            "redis.feed.write",
-            cancellationToken);
+        var throttled = await _rateLimiter.WaitAsync(cancellationToken);
+        if (throttled)
+        {
+            _metrics.RecordBackpressure("redis_rate_limit");
+        }
+
+        await _concurrencyLimiter.WaitAsync(cancellationToken);
+        try
+        {
+            await RetryHelper.ExecuteAsync(
+                async token =>
+                {
+                    await db.SortedSetAddAsync(key, postId.ToString(), createdAtMs);
+                    _metrics.RedisWrites.Add(1);
+                    await TrimHotWindowAsync(db, key, token);
+                    return true;
+                },
+                _retrySettings,
+                _metrics,
+                _logger,
+                "redis.feed.write",
+                cancellationToken);
+        }
+        finally
+        {
+            _concurrencyLimiter.Release();
+        }
     }
 
     private async Task TrimHotWindowAsync(IDatabase db, string key, CancellationToken cancellationToken)

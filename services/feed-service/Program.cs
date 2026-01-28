@@ -24,6 +24,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var redisSettings = RedisSettings.FromConfiguration(builder.Configuration);
 var feedOptions = FeedOptions.FromConfiguration(builder.Configuration);
+var resilienceOptions = FeedResilienceOptions.FromConfiguration(builder.Configuration);
 var graphSettings = GraphSettings.FromConfiguration(builder.Configuration);
 var postSettings = PostSettings.FromConfiguration(builder.Configuration);
 var redisOptions = redisSettings.ToConfigurationOptions();
@@ -33,17 +34,21 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(redisConnection);
 builder.Services.AddSingleton<FeedRepository>();
 builder.Services.AddSingleton<FeedMetrics>();
 builder.Services.AddSingleton(feedOptions);
+builder.Services.AddSingleton(resilienceOptions);
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<FeedAggregator>();
+builder.Services.AddSingleton<RetryPolicy>();
 
 builder.Services.AddHttpClient<GraphClient>(client =>
 {
     client.BaseAddress = new Uri(graphSettings.BaseUrl);
+    client.Timeout = resilienceOptions.GraphTimeout;
 });
 
 builder.Services.AddHttpClient<PostClient>(client =>
 {
     client.BaseAddress = new Uri(postSettings.BaseUrl);
+    client.Timeout = resilienceOptions.PostTimeout;
 });
 
 builder.Services.AddOpenTelemetry()
@@ -126,6 +131,7 @@ app.MapGet("/feed", async (
     catch (RedisException ex)
     {
         logger.LogWarning(ex, "Redis unavailable while serving feed for user {UserId}", userId);
+        metrics.RecordPartialResponse("redis_unavailable");
         return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
     }
 });
@@ -186,21 +192,27 @@ static bool TryGetLimit(HttpRequest request, out int limit, out ErrorResponse? e
     return true;
 }
 
-internal sealed record RedisSettings(string Host, int Port)
+internal sealed record RedisSettings(string Host, int Port, int ConnectTimeoutMs, int SyncTimeoutMs, int AsyncTimeoutMs)
 {
     public static RedisSettings FromConfiguration(IConfiguration configuration)
     {
         var host = configuration["REDIS_HOST"] ?? "localhost";
         var port = int.TryParse(configuration["REDIS_PORT"], out var parsedPort) ? parsedPort : 6379;
+        var connectTimeout = int.TryParse(configuration["REDIS_CONNECT_TIMEOUT_MS"], out var parsedConnect) ? parsedConnect : 200;
+        var syncTimeout = int.TryParse(configuration["REDIS_SYNC_TIMEOUT_MS"], out var parsedSync) ? parsedSync : 500;
+        var asyncTimeout = int.TryParse(configuration["REDIS_ASYNC_TIMEOUT_MS"], out var parsedAsync) ? parsedAsync : 500;
 
-        return new RedisSettings(host, port);
+        return new RedisSettings(host, port, connectTimeout, syncTimeout, asyncTimeout);
     }
 
     public ConfigurationOptions ToConfigurationOptions()
     {
         var options = new ConfigurationOptions
         {
-            AbortOnConnectFail = false
+            AbortOnConnectFail = false,
+            ConnectTimeout = ConnectTimeoutMs,
+            SyncTimeout = SyncTimeoutMs,
+            AsyncTimeout = AsyncTimeoutMs
         };
         options.EndPoints.Add(Host, Port);
         return options;

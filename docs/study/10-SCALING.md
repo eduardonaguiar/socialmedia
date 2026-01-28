@@ -13,6 +13,8 @@
 - **Write amplification menor** para posts de celebridades.
 - **Read cost maior** para seguidores de celebridades (pull + merge).
 - Cache curto mitiga picos, mas não elimina custo.
+- Backpressure protege Redis e Graph ao limitar concorrência e taxa de fan-out.
+- Circuit breakers no feed preservam p95/p99 quando dependências degradam.
 
 ## Considerações futuras (stubs)
 - [TODO] Sharding de Redis por faixa de usuário.

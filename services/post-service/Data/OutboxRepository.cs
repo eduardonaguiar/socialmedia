@@ -1,15 +1,18 @@
 using Npgsql;
 using PostService.Messaging;
+using PostService.Services;
 
 namespace PostService.Data;
 
 public sealed class OutboxRepository
 {
     private readonly NpgsqlDataSource _dataSource;
+    private readonly DatabaseResilience _resilience;
 
-    public OutboxRepository(NpgsqlDataSource dataSource)
+    public OutboxRepository(NpgsqlDataSource dataSource, DatabaseResilience resilience)
     {
         _dataSource = dataSource;
+        _resilience = resilience;
     }
 
     public async Task<IReadOnlyList<OutboxMessage>> LockPendingAsync(
@@ -35,26 +38,32 @@ public sealed class OutboxRepository
             RETURNING outbox_id, event_type, schema_version, payload_json, occurred_at_utc, publish_attempts;
             """;
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(sql, connection);
-        cmd.Parameters.AddWithValue("lock_timeout_seconds", (int)lockTimeout.TotalSeconds);
-        cmd.Parameters.AddWithValue("batch_size", batchSize);
-        cmd.Parameters.AddWithValue("lock_id", lockId);
+        return await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var cmd = new NpgsqlCommand(sql, connection);
+                cmd.Parameters.AddWithValue("lock_timeout_seconds", (int)lockTimeout.TotalSeconds);
+                cmd.Parameters.AddWithValue("batch_size", batchSize);
+                cmd.Parameters.AddWithValue("lock_id", lockId);
 
-        var messages = new List<OutboxMessage>();
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            messages.Add(new OutboxMessage(
-                reader.GetGuid(0),
-                reader.GetString(1),
-                reader.GetInt32(2),
-                reader.GetString(3),
-                reader.GetDateTime(4),
-                reader.GetInt32(5)));
-        }
+                var messages = new List<OutboxMessage>();
+                await using var reader = await cmd.ExecuteReaderAsync(token);
+                while (await reader.ReadAsync(token))
+                {
+                    messages.Add(new OutboxMessage(
+                        reader.GetGuid(0),
+                        reader.GetString(1),
+                        reader.GetInt32(2),
+                        reader.GetString(3),
+                        reader.GetDateTime(4),
+                        reader.GetInt32(5)));
+                }
 
-        return messages;
+                return messages;
+            },
+            "outbox.lock_pending",
+            cancellationToken);
     }
 
     public async Task MarkPublishedAsync(Guid outboxId, CancellationToken cancellationToken)
@@ -67,10 +76,17 @@ public sealed class OutboxRepository
             WHERE outbox_id = @outbox_id;
             """;
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(sql, connection);
-        cmd.Parameters.AddWithValue("outbox_id", outboxId);
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var cmd = new NpgsqlCommand(sql, connection);
+                cmd.Parameters.AddWithValue("outbox_id", outboxId);
+                await cmd.ExecuteNonQueryAsync(token);
+                return true;
+            },
+            "outbox.mark_published",
+            cancellationToken);
     }
 
     public async Task RecordFailureAsync(Guid outboxId, string error, CancellationToken cancellationToken)
@@ -84,19 +100,32 @@ public sealed class OutboxRepository
             WHERE outbox_id = @outbox_id;
             """;
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(sql, connection);
-        cmd.Parameters.AddWithValue("outbox_id", outboxId);
-        cmd.Parameters.AddWithValue("last_error", error);
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var cmd = new NpgsqlCommand(sql, connection);
+                cmd.Parameters.AddWithValue("outbox_id", outboxId);
+                cmd.Parameters.AddWithValue("last_error", error);
+                await cmd.ExecuteNonQueryAsync(token);
+                return true;
+            },
+            "outbox.record_failure",
+            cancellationToken);
     }
 
     public async Task<long> GetBacklogAsync(CancellationToken cancellationToken)
     {
         const string sql = "SELECT COUNT(*) FROM outbox_messages WHERE published_at_utc IS NULL";
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(sql, connection);
-        var result = await cmd.ExecuteScalarAsync(cancellationToken);
-        return result is long count ? count : Convert.ToInt64(result ?? 0);
+        return await _resilience.ExecuteAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var cmd = new NpgsqlCommand(sql, connection);
+                var result = await cmd.ExecuteScalarAsync(token);
+                return result is long count ? count : Convert.ToInt64(result ?? 0);
+            },
+            "outbox.backlog",
+            cancellationToken);
     }
 }

@@ -3,6 +3,8 @@ using Confluent.Kafka;
 using FanoutWorker.Metrics;
 using FanoutWorker.Models;
 using FanoutWorker.Options;
+using System.Threading.Channels;
+using System.Threading;
 
 namespace FanoutWorker.Services;
 
@@ -15,6 +17,11 @@ public sealed class FanoutWorkerService : BackgroundService
     private readonly JsonSerializerOptions _serializerOptions;
     private readonly ILogger<FanoutWorkerService> _logger;
     private readonly string _topic;
+    private readonly SemaphoreSlim _eventLimiter;
+    private readonly Channel<ProcessingCompletion> _completions;
+    private DateTimeOffset _lastLagCheck = DateTimeOffset.MinValue;
+    private DateTimeOffset? _pauseUntil;
+    private bool _paused;
 
     public FanoutWorkerService(
         IConsumer<string, string> consumer,
@@ -32,6 +39,8 @@ public sealed class FanoutWorkerService : BackgroundService
         _serializerOptions = serializerOptions;
         _logger = logger;
         _topic = kafkaSettings.TopicPostCreated;
+        _eventLimiter = new SemaphoreSlim(options.MaxConcurrentEvents, options.MaxConcurrentEvents);
+        _completions = Channel.CreateUnbounded<ProcessingCompletion>();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -42,16 +51,27 @@ public sealed class FanoutWorkerService : BackgroundService
         {
             while (!stoppingToken.IsCancellationRequested)
             {
+                await DrainCompletionsAsync(stoppingToken);
+                await ApplyLagBackpressureAsync(stoppingToken);
+
+                if (await RespectPauseAsync(stoppingToken))
+                {
+                    continue;
+                }
+
                 ConsumeResult<string, string>? result = null;
 
                 try
                 {
-                    result = _consumer.Consume(stoppingToken);
+                    result = _consumer.Consume(_options.KafkaPollTimeout);
                 }
                 catch (ConsumeException ex)
                 {
                     _metrics.RecordFailure("kafka");
                     _logger.LogWarning(ex, "Kafka consume error");
+                    _metrics.RecordBackpressure("kafka_broker");
+                    PauseConsumption();
+                    _pauseUntil = DateTimeOffset.UtcNow.Add(_options.KafkaLagPause);
                     continue;
                 }
                 catch (OperationCanceledException)
@@ -87,22 +107,175 @@ public sealed class FanoutWorkerService : BackgroundService
                     continue;
                 }
 
-                var outcome = await _processor.ProcessAsync(payload, stoppingToken);
-
-                if (outcome == ProcessingOutcome.Failed)
+                if (!_eventLimiter.Wait(0))
                 {
-                    _consumer.Seek(result.TopicPartitionOffset);
-                    await Task.Delay(_options.FailureBackoff, stoppingToken);
-                    continue;
+                    _metrics.RecordBackpressure("event_concurrency");
+                    await _eventLimiter.WaitAsync(stoppingToken);
                 }
 
-                Commit(result);
+                _ = ProcessMessageAsync(result, payload, stoppingToken);
             }
         }
         finally
         {
             _consumer.Close();
         }
+    }
+
+    private async Task ProcessMessageAsync(
+        ConsumeResult<string, string> result,
+        PostCreatedEventV1 payload,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var outcome = await _processor.ProcessAsync(payload, cancellationToken);
+            await _completions.Writer.WriteAsync(new ProcessingCompletion(result, outcome), cancellationToken);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _metrics.RecordFailure("processing");
+            _logger.LogWarning(ex, "Unhandled fanout processing failure for event {EventId}", payload.EventId);
+            await _completions.Writer.WriteAsync(new ProcessingCompletion(result, ProcessingOutcome.Failed), cancellationToken);
+        }
+        finally
+        {
+            _eventLimiter.Release();
+        }
+    }
+
+    private async Task DrainCompletionsAsync(CancellationToken cancellationToken)
+    {
+        while (_completions.Reader.TryRead(out var completion))
+        {
+            if (completion.Outcome == ProcessingOutcome.Failed)
+            {
+                _consumer.Seek(completion.Result.TopicPartitionOffset);
+                _pauseUntil = DateTimeOffset.UtcNow.Add(_options.FailureBackoff);
+                _metrics.RecordBackpressure("failure_backoff");
+                continue;
+            }
+
+            Commit(completion.Result);
+        }
+
+        await Task.Yield();
+    }
+
+    private async Task ApplyLagBackpressureAsync(CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now - _lastLagCheck < _options.KafkaLagCheckInterval)
+        {
+            return;
+        }
+
+        _lastLagCheck = now;
+
+        try
+        {
+            var totalLag = GetTotalLag();
+            _metrics.UpdateKafkaLag(totalLag);
+
+            if (totalLag > _options.KafkaLagThreshold)
+            {
+                _metrics.RecordBackpressure("kafka_lag");
+                PauseConsumption();
+                _pauseUntil = now.Add(_options.KafkaLagPause);
+                _logger.LogWarning("Kafka lag {Lag} exceeded threshold {Threshold}; pausing consumption", totalLag, _options.KafkaLagThreshold);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to query Kafka lag");
+        }
+
+        await Task.Yield();
+    }
+
+    private long GetTotalLag()
+    {
+        var assignments = _consumer.Assignment;
+        if (assignments.Count == 0)
+        {
+            return 0;
+        }
+
+        long totalLag = 0;
+
+        foreach (var partition in assignments)
+        {
+            var watermark = _consumer.QueryWatermarkOffsets(partition, TimeSpan.FromSeconds(1));
+            var position = _consumer.Position(partition);
+            if (position == Offset.Unset)
+            {
+                continue;
+            }
+
+            var lag = watermark.High.Value - position.Value;
+            if (lag > 0)
+            {
+                totalLag += lag;
+            }
+        }
+
+        return totalLag;
+    }
+
+    private void PauseConsumption()
+    {
+        if (_paused)
+        {
+            return;
+        }
+
+        var assignments = _consumer.Assignment;
+        if (assignments.Count == 0)
+        {
+            return;
+        }
+
+        _consumer.Pause(assignments);
+        _paused = true;
+    }
+
+    private void ResumeConsumption()
+    {
+        if (!_paused)
+        {
+            return;
+        }
+
+        var assignments = _consumer.Assignment;
+        if (assignments.Count == 0)
+        {
+            return;
+        }
+
+        _consumer.Resume(assignments);
+        _paused = false;
+    }
+
+    private async Task<bool> RespectPauseAsync(CancellationToken cancellationToken)
+    {
+        if (!_pauseUntil.HasValue)
+        {
+            return false;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (now >= _pauseUntil.Value)
+        {
+            _pauseUntil = null;
+            ResumeConsumption();
+            return false;
+        }
+
+        var remaining = _pauseUntil.Value - now;
+        await Task.Delay(remaining, cancellationToken);
+        ResumeConsumption();
+        _pauseUntil = null;
+        return true;
     }
 
     private void Commit(ConsumeResult<string, string> result)
@@ -117,4 +290,6 @@ public sealed class FanoutWorkerService : BackgroundService
             _logger.LogWarning(ex, "Kafka commit failed");
         }
     }
+
+    private sealed record ProcessingCompletion(ConsumeResult<string, string> Result, ProcessingOutcome Outcome);
 }
