@@ -37,14 +37,20 @@ make up
 Ensure `POST_SERVICE_URL`, `GRAPH_SERVICE_URL`, and `FEED_SERVICE_URL` are reachable. The
 `env.local.js` defaults are:
 
-- `http://localhost:7001` (post service)
-- `http://localhost:7002` (graph service)
-- `http://localhost:7003` (feed service)
+- `http://localhost:8081` (post service)
+- `http://localhost:8082` (graph service)
+- `http://localhost:8083` (feed service)
 
 ### 2) Run all scenarios
 
 ```bash
 k6 run tests/k6/main.js
+```
+
+Or via Makefile:
+
+```bash
+make k6
 ```
 
 ### 3) Run a single scenario group
@@ -66,9 +72,9 @@ SCENARIO=resilience k6 run tests/k6/main.js
 ### 4) Override environment config
 
 ```bash
-POST_SERVICE_URL=http://localhost:7001 \
-GRAPH_SERVICE_URL=http://localhost:7002 \
-FEED_SERVICE_URL=http://localhost:7003 \
+POST_SERVICE_URL=http://localhost:8081 \
+GRAPH_SERVICE_URL=http://localhost:8082 \
+FEED_SERVICE_URL=http://localhost:8083 \
 LATENCY_P95_MS=800 \
 EVENTUAL_CONSISTENCY_TIMEOUT_MS=15000 \
 SCENARIO=all \
@@ -148,4 +154,3 @@ assume strong consistency.
 - [x] Eventual consistency is explicit and bounded
 - [x] Duplicates are asserted as failures
 - [x] README explains why each test exists
-

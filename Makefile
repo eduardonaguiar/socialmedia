@@ -35,7 +35,7 @@ TEMPO_URL         ?= http://localhost:3200
 OTEL_HEALTH_URL   ?= http://localhost:13133/healthz
 
 .PHONY: help up down restart ps logs build pull reset health deps-health obs-health urls \
-        fmt test lint clean
+        fmt test lint clean k6
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -112,6 +112,12 @@ test: ## Run tests (placeholder - implement once services exist)
 	@dotnet test services/graph-service/Tests/GraphService.Tests.csproj
 	@dotnet test services/feed-service/Tests/FeedService.Tests.csproj
 	@dotnet test workers/fanout-worker/Tests/FanoutWorker.Tests.csproj
+
+k6: ## Run k6 E2E/functional scenarios (requires k6 CLI installed)
+	@POST_SERVICE_URL=$(POST_SERVICE_URL) \
+	GRAPH_SERVICE_URL=$(GRAPH_SERVICE_URL) \
+	FEED_SERVICE_URL=$(FEED_SERVICE_URL) \
+	k6 run tests/k6/main.js
 
 clean: ## Local cleanup (non-destructive)
 	@echo "Nothing to clean yet."

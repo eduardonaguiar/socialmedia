@@ -1,7 +1,7 @@
 export const env = {
-  postServiceUrl: __ENV.POST_SERVICE_URL || 'http://localhost:7001',
-  graphServiceUrl: __ENV.GRAPH_SERVICE_URL || 'http://localhost:7002',
-  feedServiceUrl: __ENV.FEED_SERVICE_URL || 'http://localhost:7003',
+  postServiceUrl: __ENV.POST_SERVICE_URL || 'http://localhost:8081',
+  graphServiceUrl: __ENV.GRAPH_SERVICE_URL || 'http://localhost:8082',
+  feedServiceUrl: __ENV.FEED_SERVICE_URL || 'http://localhost:8083',
   defaultUserId: __ENV.DEFAULT_USER_ID || 'user-1',
   defaultAuthorId: __ENV.DEFAULT_AUTHOR_ID || 'author-1',
   celebrityAuthorId: __ENV.CELEBRITY_AUTHOR_ID || 'celebrity-1',
