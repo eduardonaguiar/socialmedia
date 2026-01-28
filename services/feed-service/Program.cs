@@ -65,7 +65,6 @@ builder.Services.AddOpenTelemetry()
         .AddSource(FeedTelemetry.ActivitySourceName)
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
-        .AddStackExchangeRedisInstrumentation(redisConnection)
         .AddOtlpExporter())
     .WithMetrics(metrics => metrics
         .AddAspNetCoreInstrumentation()

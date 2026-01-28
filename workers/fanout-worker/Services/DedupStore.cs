@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FanoutWorker.Metrics;
 using FanoutWorker.Options;
 using StackExchange.Redis;
@@ -30,6 +31,10 @@ public sealed class DedupStore : IDedupStore
         var key = GetKey(eventId);
         var db = _connection.GetDatabase();
 
+        using var activity = FanoutTelemetry.ActivitySource.StartActivity("redis.SETNX", ActivityKind.Client);
+        activity?.SetTag("db.system", "redis");
+        activity?.SetTag("db.operation", "SETNX");
+
         return await RetryHelper.ExecuteAsync(
             async token => await db.StringSetAsync(key, "1", ttl, When.NotExists),
             _retry,
@@ -43,6 +48,9 @@ public sealed class DedupStore : IDedupStore
     {
         var key = GetKey(eventId);
         var db = _connection.GetDatabase();
+        using var activity = FanoutTelemetry.ActivitySource.StartActivity("redis.DEL", ActivityKind.Client);
+        activity?.SetTag("db.system", "redis");
+        activity?.SetTag("db.operation", "DEL");
         await db.KeyDeleteAsync(key);
     }
 

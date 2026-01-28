@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FeedService.Metrics;
 using FeedService.Models;
 using StackExchange.Redis;
@@ -39,7 +40,8 @@ public sealed class FeedRepository
                     Exclude.None,
                     Order.Descending,
                     0,
-                    limit));
+                    limit),
+                activity => activity?.SetTag("feed.limit", limit));
 
             return MapEntries(entries, limit);
         }
@@ -53,7 +55,8 @@ public sealed class FeedRepository
                 cursor.Score,
                 cursor.Score,
                 Exclude.None,
-                Order.Descending));
+                Order.Descending),
+            activity => activity?.SetTag("feed.limit", limit));
 
         foreach (var entry in sameScoreEntries)
         {
@@ -89,7 +92,8 @@ public sealed class FeedRepository
                 Exclude.Start,
                 Order.Descending,
                 0,
-                remaining));
+                remaining),
+            activity => activity?.SetTag("feed.limit", limit));
 
         results.AddRange(MapEntries(belowEntries, remaining));
         return results;
@@ -113,9 +117,13 @@ public sealed class FeedRepository
             () => db.SortedSetRemoveRangeByRankAsync(key, range.Start, range.Stop));
     }
 
-    private async Task<T> ExecuteWithMetricsAsync<T>(string operation, Func<Task<T>> action)
+    private async Task<T> ExecuteWithMetricsAsync<T>(string operation, Func<Task<T>> action, Action<Activity?>? enrich = null)
     {
         using var timer = _metrics.TrackRedisOperation(operation);
+        using var activity = FeedTelemetry.ActivitySource.StartActivity($"redis.{operation}", ActivityKind.Client);
+        activity?.SetTag("db.system", "redis");
+        activity?.SetTag("db.operation", operation);
+        enrich?.Invoke(activity);
 
         try
         {

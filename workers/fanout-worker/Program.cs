@@ -80,7 +80,6 @@ builder.Services.AddOpenTelemetry()
         .AddSource(FanoutTelemetry.ActivitySourceName)
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
-        .AddStackExchangeRedisInstrumentation(redisConnection)
         .AddOtlpExporter())
     .WithMetrics(metrics => metrics
         .AddAspNetCoreInstrumentation()
