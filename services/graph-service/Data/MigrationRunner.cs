@@ -1,4 +1,5 @@
 using Npgsql;
+using GraphService.Services;
 
 namespace GraphService.Data;
 
@@ -38,11 +39,13 @@ public sealed class MigrationRunner
 
             var sql = await File.ReadAllTextAsync(file, cancellationToken);
             await using var tx = await connection.BeginTransactionAsync(cancellationToken);
+            using var migrationActivity = GraphTelemetry.StartDatabaseActivity("DDL", connection, "APPLY migration");
             await using (var cmd = new NpgsqlCommand(sql, connection, tx))
             {
                 await cmd.ExecuteNonQueryAsync(cancellationToken);
             }
 
+            using var insertActivity = GraphTelemetry.StartDatabaseActivity("INSERT", connection, "INSERT schema_migrations");
             await using (var insertCmd = new NpgsqlCommand(
                 "INSERT INTO schema_migrations(version, applied_at_utc) VALUES (@version, now())",
                 connection,
@@ -66,6 +69,7 @@ public sealed class MigrationRunner
             );
             """;
 
+        using var activity = GraphTelemetry.StartDatabaseActivity("DDL", connection, "CREATE schema_migrations");
         await using var cmd = new NpgsqlCommand(sql, connection);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -73,6 +77,7 @@ public sealed class MigrationRunner
     private static async Task<HashSet<string>> GetAppliedAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
     {
         var applied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var activity = GraphTelemetry.StartDatabaseActivity("SELECT", connection, "SELECT schema_migrations");
         await using var cmd = new NpgsqlCommand("SELECT version FROM schema_migrations", connection);
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

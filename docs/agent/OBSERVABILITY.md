@@ -1,7 +1,8 @@
 # Observability (Local Stack)
 
 This lab ships a local observability stack via Docker Compose. The PT-BR rationale and
-stack diagram context live in `docs/study/04-ARCHITECTURE.md` (see “Observabilidade (stack local)”).
+stack diagram context live in `docs/study/04-ARCHITECTURE.md` (see “Observabilidade (stack local)” and
+“Instrumentação de banco (PostgreSQL)”).
 
 ## Components
 - **OpenTelemetry Collector**: single OTLP entrypoint, routes to metrics/logs/traces backends.
@@ -18,6 +19,13 @@ Pipelines:
 - traces → Tempo
 - metrics → Prometheus (exporter on `:8889`)
 - logs → Loki
+
+## PostgreSQL tracing (manual)
+The .NET OpenTelemetry ecosystem does **not** provide a stable
+`OpenTelemetry.Instrumentation.Npgsql` package. To keep the lab realistic and stable, the services
+use **manual spans** via `ActivitySource` around relevant SQL operations (feed/graph reads + writes,
+outbox updates, and migrations). The spans set `db.system = postgresql`, `db.operation`, and `db.name`,
+and only attach `db.statement` for static/sanitized statements to avoid high-cardinality tags.
 
 ## Local URLs
 - Grafana: http://localhost:3000

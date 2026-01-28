@@ -42,6 +42,10 @@ public sealed class OutboxRepository
             async token =>
             {
                 await using var connection = await _dataSource.OpenConnectionAsync(token);
+                using var activity = PostTelemetry.StartDatabaseActivity(
+                    "UPDATE",
+                    connection,
+                    "UPDATE outbox lock");
                 await using var cmd = new NpgsqlCommand(sql, connection);
                 cmd.Parameters.AddWithValue("lock_timeout_seconds", (int)lockTimeout.TotalSeconds);
                 cmd.Parameters.AddWithValue("batch_size", batchSize);
@@ -80,6 +84,10 @@ public sealed class OutboxRepository
             async token =>
             {
                 await using var connection = await _dataSource.OpenConnectionAsync(token);
+                using var activity = PostTelemetry.StartDatabaseActivity(
+                    "UPDATE",
+                    connection,
+                    "UPDATE outbox mark published");
                 await using var cmd = new NpgsqlCommand(sql, connection);
                 cmd.Parameters.AddWithValue("outbox_id", outboxId);
                 await cmd.ExecuteNonQueryAsync(token);
@@ -104,6 +112,10 @@ public sealed class OutboxRepository
             async token =>
             {
                 await using var connection = await _dataSource.OpenConnectionAsync(token);
+                using var activity = PostTelemetry.StartDatabaseActivity(
+                    "UPDATE",
+                    connection,
+                    "UPDATE outbox failure");
                 await using var cmd = new NpgsqlCommand(sql, connection);
                 cmd.Parameters.AddWithValue("outbox_id", outboxId);
                 cmd.Parameters.AddWithValue("last_error", error);
@@ -121,6 +133,10 @@ public sealed class OutboxRepository
             async token =>
             {
                 await using var connection = await _dataSource.OpenConnectionAsync(token);
+                using var activity = PostTelemetry.StartDatabaseActivity(
+                    "SELECT",
+                    connection,
+                    "SELECT outbox backlog");
                 await using var cmd = new NpgsqlCommand(sql, connection);
                 var result = await cmd.ExecuteScalarAsync(token);
                 return result is long count ? count : Convert.ToInt64(result ?? 0);

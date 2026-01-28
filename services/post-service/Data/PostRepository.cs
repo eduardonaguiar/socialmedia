@@ -27,6 +27,10 @@ public sealed class PostRepository
             async token =>
             {
                 await using var connection = await _dataSource.OpenConnectionAsync(token);
+                using var activity = PostTelemetry.StartDatabaseActivity(
+                    "SELECT",
+                    connection,
+                    "SELECT posts by id");
                 await using var cmd = new NpgsqlCommand(sql, connection);
                 cmd.Parameters.AddWithValue("post_id", postId);
 
@@ -81,6 +85,10 @@ public sealed class PostRepository
             {
                 await using var connection = await _dataSource.OpenConnectionAsync(token);
                 await using var tx = await connection.BeginTransactionAsync(token);
+                using var activity = PostTelemetry.StartDatabaseActivity(
+                    "INSERT",
+                    connection,
+                    "INSERT posts and outbox");
                 await using var cmd = new NpgsqlCommand(sql, connection, tx);
                 cmd.Parameters.AddWithValue("post_id", postId);
                 cmd.Parameters.AddWithValue("author_id", authorId);
@@ -121,6 +129,10 @@ public sealed class PostRepository
             async token =>
             {
                 await using var connection = await _dataSource.OpenConnectionAsync(token);
+                using var activity = PostTelemetry.StartDatabaseActivity(
+                    "SELECT",
+                    connection,
+                    "SELECT posts by author");
                 await using var cmd = new NpgsqlCommand(sql, connection);
                 cmd.Parameters.AddWithValue("author_id", authorId);
                 cmd.Parameters.AddWithValue("cursor_ts", (object?)cursorTimestampUtc ?? DBNull.Value);

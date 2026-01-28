@@ -98,6 +98,10 @@ public sealed class GraphRepository
             async token =>
             {
                 await using var connection = await _dataSource.OpenConnectionAsync(token);
+                using var activity = GraphTelemetry.StartDatabaseActivity(
+                    "SELECT",
+                    connection,
+                    "SELECT follow edge");
                 await using var cmd = new NpgsqlCommand(
                     "SELECT 1 FROM follow_edges WHERE follower_id = @follower_id AND followed_id = @followed_id",
                     connection);
@@ -122,6 +126,10 @@ public sealed class GraphRepository
             async token =>
             {
                 await using var connection = await _dataSource.OpenConnectionAsync(token);
+                using var activity = GraphTelemetry.StartDatabaseActivity(
+                    "SELECT",
+                    connection,
+                    "SELECT following list");
                 await using var cmd = new NpgsqlCommand(
                     """
                     SELECT followed_id, followed_at_utc
@@ -164,6 +172,10 @@ public sealed class GraphRepository
             async token =>
             {
                 await using var connection = await _dataSource.OpenConnectionAsync(token);
+                using var activity = GraphTelemetry.StartDatabaseActivity(
+                    "SELECT",
+                    connection,
+                    "SELECT followers list");
                 await using var cmd = new NpgsqlCommand(
                     """
                     SELECT follower_id, followed_at_utc
@@ -207,6 +219,10 @@ public sealed class GraphRepository
             async token =>
             {
                 await using var connection = await _dataSource.OpenConnectionAsync(token);
+                using var activity = GraphTelemetry.StartDatabaseActivity(
+                    "SELECT",
+                    connection,
+                    "SELECT celebrity following");
                 await using var cmd = new NpgsqlCommand(
                     """
                     SELECT f.followed_id, f.followed_at_utc, COALESCE(s.followers_count, 0) AS followers_count
@@ -248,6 +264,10 @@ public sealed class GraphRepository
             async token =>
             {
                 await using var connection = await _dataSource.OpenConnectionAsync(token);
+                using var activity = GraphTelemetry.StartDatabaseActivity(
+                    "SELECT",
+                    connection,
+                    "SELECT user stats");
                 await using var cmd = new NpgsqlCommand(
                     """
                     SELECT user_id, followers_count
@@ -288,6 +308,10 @@ public sealed class GraphRepository
             connection,
             tx);
 
+        using var insertActivity = GraphTelemetry.StartDatabaseActivity(
+            "INSERT",
+            connection,
+            "INSERT follow edge");
         insertCmd.Parameters.AddWithValue("follower_id", followerId);
         insertCmd.Parameters.AddWithValue("followed_id", followedId);
         insertCmd.Parameters.AddWithValue("followed_at_utc", followedAtUtc);
@@ -307,6 +331,10 @@ public sealed class GraphRepository
             connection,
             tx);
 
+        using var selectActivity = GraphTelemetry.StartDatabaseActivity(
+            "SELECT",
+            connection,
+            "SELECT follow edge");
         selectCmd.Parameters.AddWithValue("follower_id", followerId);
         selectCmd.Parameters.AddWithValue("followed_id", followedId);
 
@@ -337,6 +365,10 @@ public sealed class GraphRepository
             connection,
             tx);
 
+        using var activity = GraphTelemetry.StartDatabaseActivity(
+            "INSERT",
+            connection,
+            "UPSERT following_by_user");
         cmd.Parameters.AddWithValue("user_id", userId);
         cmd.Parameters.AddWithValue("followed_id", followedId);
         cmd.Parameters.AddWithValue("followed_at_utc", followedAtUtc);
@@ -361,6 +393,10 @@ public sealed class GraphRepository
             connection,
             tx);
 
+        using var activity = GraphTelemetry.StartDatabaseActivity(
+            "INSERT",
+            connection,
+            "UPSERT followers_by_user");
         cmd.Parameters.AddWithValue("user_id", userId);
         cmd.Parameters.AddWithValue("follower_id", followerId);
         cmd.Parameters.AddWithValue("followed_at_utc", followedAtUtc);
@@ -382,6 +418,10 @@ public sealed class GraphRepository
             connection,
             tx);
 
+        using var activity = GraphTelemetry.StartDatabaseActivity(
+            "DELETE",
+            connection,
+            "DELETE follow edge");
         cmd.Parameters.AddWithValue("follower_id", followerId);
         cmd.Parameters.AddWithValue("followed_id", followedId);
 
@@ -404,6 +444,10 @@ public sealed class GraphRepository
             connection,
             tx);
 
+        using var activity = GraphTelemetry.StartDatabaseActivity(
+            "DELETE",
+            connection,
+            "DELETE following_by_user");
         cmd.Parameters.AddWithValue("user_id", userId);
         cmd.Parameters.AddWithValue("followed_id", followedId);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
@@ -424,6 +468,10 @@ public sealed class GraphRepository
             connection,
             tx);
 
+        using var activity = GraphTelemetry.StartDatabaseActivity(
+            "DELETE",
+            connection,
+            "DELETE followers_by_user");
         cmd.Parameters.AddWithValue("user_id", userId);
         cmd.Parameters.AddWithValue("follower_id", followerId);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
@@ -445,6 +493,10 @@ public sealed class GraphRepository
             connection,
             tx);
 
+        using var activity = GraphTelemetry.StartDatabaseActivity(
+            "INSERT",
+            connection,
+            "UPSERT user_stats increment");
         cmd.Parameters.AddWithValue("user_id", userId);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -464,6 +516,10 @@ public sealed class GraphRepository
             connection,
             tx);
 
+        using var activity = GraphTelemetry.StartDatabaseActivity(
+            "UPDATE",
+            connection,
+            "UPDATE user_stats decrement");
         cmd.Parameters.AddWithValue("user_id", userId);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
