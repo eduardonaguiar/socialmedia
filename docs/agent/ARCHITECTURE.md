@@ -61,3 +61,8 @@ Reference (PT-BR): `docs/study/06-FEED_STRATEGY.md`, `docs/study/08-CONSISTENCY.
   - Redis down → explicit 503 today (fallback path later)
   - Graph/Post down → partial feed (push-only)
   - Circuit breakers + retries guard p99 latency
+
+## Scale evolution & cost (study links)
+- Scale stages, bottlenecks, and control knobs: `docs/study/11-SCALE_EVOLUTION.md`.
+- Cost model and trade-offs: `docs/study/12-COST_MODEL.md`.
+- Interview-grade narrative + cheat sheet: `docs/study/13-INTERVIEW_REVIEW.md`.
